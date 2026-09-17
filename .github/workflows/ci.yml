@@ -46,10 +46,21 @@ jobs:
           docker exec apifit-smoke node scripts/container-health.mjs
           docker exec apifit-smoke node --input-type=module -e '
             import {writeFileSync} from "node:fs";
-            const response = await fetch("http://127.0.0.1:8080/", {headers:{Host:"apifit.example.com"}});
-            if (response.status !== 200 || !(await response.text()).includes("APIFit")) process.exit(1);
-            const status = await fetch("http://127.0.0.1:8080/api/ai/status", {headers:{Host:"apifit.example.com"}});
-            if ((await status.json()).ready !== false) process.exit(1);
+            import http from "node:http";
+            import assert from "node:assert/strict";
+            const read = path => new Promise((resolve,reject) => {
+              const request = http.get({hostname:"127.0.0.1",port:8080,path,headers:{Host:"apifit.example.com"},timeout:3000}, response => {
+                let text=""; response.setEncoding("utf8"); response.on("data",chunk=>text+=chunk);
+                response.on("end",()=>resolve({status:response.statusCode,text}));
+              });
+              request.on("error",reject); request.on("timeout",()=>request.destroy(new Error("Smoke timeout")));
+            });
+            const response = await read("/");
+            assert.equal(response.status,200,"Public root should serve the built interface");
+            assert.ok(response.text.includes("APIFit"),"Built page should be present");
+            const status = await read("/api/ai/status");
+            assert.equal(status.status,200,"AI status should be readable in public mode");
+            assert.equal(JSON.parse(status.text).ready,false,"AI must remain disabled in this smoke");
             writeFileSync("/data/.smoke-marker", "fictional-ci-marker");
           '
           docker restart apifit-smoke
