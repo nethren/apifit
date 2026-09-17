@@ -1,0 +1,19 @@
+# Only build inputs may enter the context. In particular, no .env, .local or Git.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!index.html
+!vite.config.mjs
+!src/
+!src/**
+!public/
+!public/**
+!server/
+!server/**
+!shared/
+!shared/**
+!scripts/
+!scripts/**
+!tests/
+!tests/**

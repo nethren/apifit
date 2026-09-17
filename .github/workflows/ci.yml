@@ -1,0 +1,61 @@
+name: Check APIFit
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run repo:check
+      - run: npm run check
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: docker build --tag apifit:ci .
+      - name: Start isolated public-mode smoke (AI disabled)
+        run: >-
+          docker run -d --name apifit-smoke --network none --read-only
+          --tmpfs /tmp:size=32m --cap-drop ALL --security-opt no-new-privileges
+          --mount type=volume,source=apifit-smoke-data,target=/data
+          -e APIFIT_ACCESS_MODE=public
+          -e APIFIT_PUBLIC_ORIGIN=https://apifit.example.com
+          -e APIFIT_AI_ENABLED=false apifit:ci
+      - name: Check listener and writable persistent volume
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if docker exec apifit-smoke node scripts/container-health.mjs; then break; fi
+            sleep 1
+          done
+          docker exec apifit-smoke node scripts/container-health.mjs
+          docker exec apifit-smoke node --input-type=module -e '
+            import {writeFileSync} from "node:fs";
+            const response = await fetch("http://127.0.0.1:8080/", {headers:{Host:"apifit.example.com"}});
+            if (response.status !== 200 || !(await response.text()).includes("APIFit")) process.exit(1);
+            const status = await fetch("http://127.0.0.1:8080/api/ai/status", {headers:{Host:"apifit.example.com"}});
+            if ((await status.json()).ready !== false) process.exit(1);
+            writeFileSync("/data/.smoke-marker", "fictional-ci-marker");
+          '
+          docker restart apifit-smoke
+          docker exec apifit-smoke node -e 'if(require("node:fs").readFileSync("/data/.smoke-marker","utf8")!=="fictional-ci-marker")process.exit(1)'
+      - name: Remove isolated smoke container and test volume
+        if: always()
+        run: |
+          docker rm -f apifit-smoke || true
+          docker volume rm apifit-smoke-data || true

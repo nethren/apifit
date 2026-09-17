@@ -1,0 +1,14 @@
+/* Selected Yacht Club direction: pearl canvas, ocean teal and sea glass.
+   Sea-glass fills use dark ink; darker green text sits on pale secondary surfaces.
+   Keep these in CSS: the app intentionally disallows inline styles in its CSP. */
+:root, :root[data-palette="yacht"] {
+  --paper: #f7faf9; --surface: #ffffff; --ink: #252a2e; --muted: #566169;
+  --brand-strong: #245f73; --headline: #245f73; --soft: #e2ecee;
+  --accent: #245f73; --on-accent: #ffffff; --accent-hover: #1c4c5d; --accent-text: #245f73;
+  --secondary: #355d58; --secondary-soft: #e4efeb;
+  --line: #d5e1e3; --line-strong: #9ab6bd; --control-border: #597e86; --focus: #245f73;
+  --art-accent: #afcbc4; --art-on-accent: #203c43; --art-stroke: #245f73; --art-hint: #7caaa1;
+}
+
+.ai-toggle { min-height: 44px; white-space: nowrap; }
+@media (max-width: 580px) { .topbar .nav-link:not(.ai-toggle) { display: none; } .topbar { gap: 10px; } }

@@ -1,0 +1,37 @@
+/* Pearl in light mode; near-black canvas and gently raised dark surfaces. */
+:root {
+  color-scheme: light;
+  --shadow: #0000001a; --scrim: #10212566;
+  --toast-surface: #252a2e; --toast-ink: #ffffff;
+  --error-ink: #8a3325; --error-surface: #fff0eb; --error-line: #e9c5bb;
+  --warning-ink: #6d5224; --warning-surface: #f5efdf; --warning-line: #e7dcba;
+}
+:root[data-mode="dark"] {
+  color-scheme: dark;
+  --paper: #0c0e0f; --surface: #171b1d; --ink: #e9ecef; --muted: #a7afb5;
+  --line: #30363b; --line-strong: #475159; --control-border: #75818a;
+  --shadow: #00000066; --scrim: #000000a6;
+  --toast-surface: #30383d; --toast-ink: #e9ecef;
+  --error-ink: #f1a797; --error-surface: #34231f; --error-line: #674035;
+  --warning-ink: #e3c58a; --warning-surface: #302a1f; --warning-line: #665337;
+}
+:root[data-palette="yacht"][data-mode="dark"] {
+  --brand-strong: #a0c7d2; --headline: #8bc4d4; --soft: #1e262a;
+  --accent: #8bc4d4; --on-accent: #14242a; --accent-hover: #a5d6e2; --accent-text: #a0c7d2;
+  --secondary: #9bbab4; --secondary-soft: #1b2321; --focus: #8bc4d4;
+  --line: #2b3033; --line-strong: #424b50; --control-border: #75838a;
+  --art-accent: #9bbab4; --art-on-accent: #203c43; --art-stroke: #8bc4d4; --art-hint: #537f77;
+}
+
+.appearance-controls { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mode-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 44px; min-height: 44px; padding: 0 10px; color: var(--muted); font-size: 11px; border-radius: 6px; }
+.mode-toggle[aria-pressed="true"] { color: var(--ink); }
+@media (hover: hover) and (pointer: fine) { .mode-toggle:hover { background: var(--soft); } }
+@media (max-width: 1000px) { .mode-toggle span { display: none; } }
+@media (max-width: 480px) {
+  .appearance-controls { gap: 0; }
+  .shortlist-label { display: none; }
+  .topbar .shortlist-nav { min-height: 44px; padding: 8px 4px; gap: 6px; }
+  .topbar .brand { font-size: 25px; gap: 8px; }
+  .topbar .brand .fit-mark { width: 26px; height: 26px; }
+}

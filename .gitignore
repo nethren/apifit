@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage/
+test-results/
+playwright-report/
+*.log
+.cache/
+.local/
+.playwright-cli/
+output/playwright/
+output/search-quality/
+output/retrieval-quality/

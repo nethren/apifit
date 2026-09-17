@@ -1,0 +1,18 @@
+{
+  "version": "mcp-retrieval-2026-09-16",
+  "basis": "Fictional requests frozen before the lexical change. References are registry-listed leads, not verified ownership or capability. Development and held-out outputs are separate; paid checks are optional.",
+  "cases": [
+    {"id":"d01","split":"development","source":"mcp","query":"Find GitHub's own MCP connection for my coding assistant.","queries":["GitHub MCP server","model context protocol GitHub registry"],"expected":["io.github.github/github-mcp-server"]},
+    {"id":"d02","split":"development","source":"mcp","query":"I want Microsoft's Playwright connector for browser automation.","queries":["Playwright MCP browser","Microsoft model context protocol server"],"expected":["io.github.microsoft/playwright-mcp"]},
+    {"id":"d03","split":"development","source":"mcp","query":"Look for the original Context7 integration by Upstash.","queries":["Context7 MCP","Upstash documentation server"],"expected":["io.github.upstash/context7"]},
+    {"id":"d04","split":"development","source":"mcp","query":"An MCP connection for working with my Notion workspace.","queries":["Notion MCP server","Notion pages databases"],"expected":["com.notion/mcp","com.mcparmory/notion"]},
+    {"id":"d05","split":"development","source":"mcp","query":"Connect my assistant to Linear issues with Linear's MCP.","queries":["Linear MCP issue tracking","Linear model context protocol"],"expected":["app.linear/linear"]},
+    {"id":"d06","split":"development","source":"mcp","query":"Help me discover and publish servers in an MCP registry.","queries":["MCP registry publish discover","model context protocol registry"],"expected":["ai.com.mcp/registry","ai.arclan/registry"]},
+    {"id":"h01","split":"holdout","source":"mcp","query":"Show the Figma MCP connection for bringing design context into my coding assistant.","queries":["Figma design MCP server","Figma model context protocol"],"expected":["com.figma.mcp/mcp","io.github.GLips/Figma-Context-MCP"]},
+    {"id":"h02","split":"holdout","source":"mcp","query":"Find the Supabase MCP server for working with my database project.","queries":["Supabase MCP server","Supabase database model context protocol"],"expected":["com.supabase/mcp"]},
+    {"id":"h03","split":"holdout","source":"mcp","query":"I need the Sentry MCP integration for error monitoring.","queries":["Sentry MCP error monitoring","Sentry model context protocol server"],"expected":["io.github.getsentry/sentry-mcp","io.github.friendlygeorge/sentry-mcp-server","com.mcparmory/sentry"]},
+    {"id":"h04","split":"holdout","source":"mcp","query":"GitHub repository management through GitHub's own MCP, rather than a tool for finding MCP servers.","queries":["official GitHub MCP server registry","GitHub repository management"],"expected":["io.github.github/github-mcp-server"]},
+    {"id":"h05","split":"holdout","source":"mcp","query":"Use Context7 to look up framework documentation, not a general MCP registry.","queries":["Context7 documentation MCP server","model context protocol documentation registry"],"expected":["io.github.upstash/context7"]},
+    {"id":"h06","split":"holdout","source":"mcp","query":"Browse available MCP servers using a registry integration.","queries":["MCP registry discovery","model context protocol registry server"],"expected":["ai.com.mcp/registry","ai.arclan/registry"]}
+  ]
+}

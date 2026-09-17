@@ -1,0 +1,32 @@
+# Requires an HTTPS ingress on this host; the app port is loopback-only.
+# Do not replace 127.0.0.1 with 0.0.0.0 to work around ingress configuration.
+services:
+  apifit:
+    build: .
+    image: apifit:preview
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      APIFIT_PUBLIC_ORIGIN: ${APIFIT_PUBLIC_ORIGIN:?Set the exact HTTPS origin}
+      APIFIT_ACCESS_MODE: public
+      APIFIT_AI_ENABLED: ${APIFIT_AI_ENABLED:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      APIFIT_DATA_DIR: /data
+    volumes:
+      - apifit-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 128
+    stop_grace_period: 15s
+
+volumes:
+  apifit-data:

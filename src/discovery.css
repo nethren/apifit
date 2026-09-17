@@ -1,0 +1,38 @@
+.inline-project { width: min(1200px, calc(100% - 80px)); margin: 22px auto 32px; padding: 26px 30px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.inline-project-heading { display: flex; align-items: start; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.inline-project h2 { font-size: 25px; letter-spacing: -.035em; }
+.inline-project-heading p, .inline-project-note, .inline-questions p { color: var(--muted); font-size: 15px; margin-top: 5px; }
+.inline-project-status { display: flex; align-items: center; gap: 6px; color: var(--brand-strong); font-size: 14px; white-space: nowrap; padding-top: 5px; }
+.inline-project .requirement { display: grid; grid-template-columns: minmax(0,1fr) 170px 44px; gap: 12px; }
+.inline-project .requirement select { width: 100%; }
+.inline-project .requirement input, .inline-project .requirement select, .inline-search-terms input { min-height: 46px; font-size: 16px; }
+.inline-project .requirement .icon-button { width: 44px; height: 44px; }
+.inline-project .confirmation { margin: 0; font-size: 15px; }
+.inline-project .requirements { margin: 0; }
+.inline-project-actions { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-top: 20px; }
+.inline-project .text-button { min-height: 44px; font-size: 15px; }
+.inline-questions { margin: 16px 0; padding: 16px 20px; border-left: 3px solid var(--brand-strong); background: var(--soft); border-radius: 0 8px 8px 0; }
+.inline-questions summary { font-size: 16px; cursor: pointer; min-height: 28px; }
+.inline-questions ul, .partial-assessment ul { margin: 8px 0; padding-left: 20px; }
+.inline-search-terms { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 15px; }
+.inline-search-terms summary { cursor: pointer; min-height: 40px; color: var(--brand-strong); }
+.inline-search-terms p { color: var(--muted); max-width: 80ch; }
+.inline-search-terms fieldset { border: 0; padding: 16px 0; margin: 0; display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.inline-search-terms label { display: grid; gap: 6px; flex: 1 1 200px; min-width: 0; }
+.inline-search-terms input { width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 8px; padding: 10px 12px; }
+.inline-search-terms .original-request { margin: 0 0 12px; overflow-wrap: anywhere; }
+.inline-project-note { margin-top: 12px; }
+.partial-assessment { margin-top: 20px; }
+@media (max-width: 860px) {
+  .inline-project { width: calc(100% - 48px); padding: 22px; }
+  .inline-project-actions { flex-wrap: wrap; }
+}
+@media (max-width: 600px) {
+  .inline-project { width: calc(100% - 32px); padding: 18px; }
+  .inline-project-heading { display: block; }
+  .inline-project-status { margin-top: 10px; }
+  .inline-project .requirement { grid-template-columns: minmax(0,1fr) 44px; }
+  .inline-project .requirement label { grid-column: 1 / -1; }
+  .inline-project .requirement select { grid-column: 1; }
+  .inline-project-actions .button { width: 100%; }
+}
