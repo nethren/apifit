@@ -5,7 +5,7 @@ import { parseSource } from '../server/parser.mjs';
 import { source, apiDirectory } from './fixtures.mjs';
 import { AiService, AI_CONSENT } from '../server/ai-service.mjs';
 import { directoryContext, rankingContext, validateRanking, validateEvidenceRanking, validateConcepts, conceptCoverage } from '../server/search-ai.mjs';
-import { taskSchema } from '../server/ai-prompts.mjs';
+import { taskSchema, TASKS } from '../server/ai-prompts.mjs';
 import { normalizeApis } from '../server/catalog.mjs';
 import { CONCEPT_ICONS } from '../shared/concept-icons.mjs';
 
@@ -160,4 +160,20 @@ test('more results reuse the stored concepts without another interpretation requ
   const more = await post(`/api/discover/${first.id}/more`, { _records: first._recordToken ? { [first.id]: first._recordToken } : undefined, ...options });
   assert.deepEqual(first.concepts.map(c => c.id), ['k1']); assert.deepEqual(more.concepts.map(c => c.id), ['k1']);
   assert.deepEqual(requests.map(r => r.map(k => k.id)), [['k1'], ['k1']]);
+});
+
+test('feature matches are told to quote the description, and only description quotes keep coverage', () => {
+  // Production on 2026-11-19: the ranker quoted Name: lines for feature matches,
+  // so every result was downgraded to an identity lead with no coverage.
+  assert.match(TASKS.rank.instruction, /For a feature match, quote the Description: text that establishes the action, never the Name: or Product: line/);
+  const [first] = context;
+  const description = first.excerpt.split('\n').find(line => line.startsWith('Description: ')).slice('Description: '.length, 'Description: '.length + 60);
+  const name = first.excerpt.split('\n')[0];
+  const rank = quote => validateRanking({ uncovered: [], matches: [{ id: first.id, tier: 'close', reason: 'Does the described action.', gap: '', quote, covers: ['k2'] }] }, items, context, concepts).items[0].match;
+  const byDescription = rank(description);
+  assert.equal(byDescription.reason, 'Does the described action.');
+  assert.deepEqual(byDescription.covers, ['k2']);
+  const byName = rank(name);
+  assert.match(byName.reason, /^Listed under this name/);
+  assert.deepEqual(byName.covers, []);
 });
