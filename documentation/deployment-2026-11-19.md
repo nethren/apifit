@@ -36,3 +36,15 @@ Owner authorized committing and deploying the Signal redesign to production.
 - Phone width (375 px) showed no horizontal overflow.
 - Shared ledger moved from US$4.326423 to US$4.341103 (about US$0.015) for
   these three provider calls. Not verified live: brief generation.
+
+## Ranking quote fix
+
+- Commit `e4020ba` tells feature matches to quote the `Description:` text
+  that establishes the action (prompt version
+  `apifit-lookup-and-capabilities-v4.8-feature-quotes`), with a regression
+  test. 253 tests passed, 5 skipped; build and hygiene checks passed.
+- Deployed as https://apifit-gxzdxa671-nethrens-projects.vercel.app.
+- The same live search returned seven matches with result-specific reasons
+  and gaps. Weather APIs covered Weather, Amazon Pinpoint covered SMS, and no
+  listing established Alerts, which stayed uncovered.
+- Shared ledger: US$4.35003 charged/reserved (about US$0.009 for this check).
