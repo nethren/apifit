@@ -1,4 +1,5 @@
 import { requestNameChoices } from './search-intent.mjs';
+import { CONCEPT_ICONS } from '../shared/concept-icons.mjs';
 
 export const SYSTEM = `You are APIFit's bounded API documentation analyst for a non-technical product manager.
 Your only job is to interpret a project request or the supplied documentation evidence for API/MCP selection.
@@ -96,7 +97,14 @@ SELECTION EXAMPLE (fictional candidates, not facts): User asks for product barco
 export function taskSchema(taskName, data) {
   if (taskName === 'searchPlan') {
     const names = requestNameChoices(data.request);
-    return object({ queries: array(string), constraints: array(object({ name: { type: 'string', enum: names.length ? names : ['No named identity'] }, scope: { type: 'string', enum: ['publisher', 'product'] }, mode: { type: 'string', enum: ['include', 'exclude'] } })) });
+    return object({ queries: array(string), constraints: array(object({ name: { type: 'string', enum: names.length ? names : ['No named identity'] }, scope: { type: 'string', enum: ['publisher', 'product'] }, mode: { type: 'string', enum: ['include', 'exclude'] } })), concepts: TASKS.searchPlan.schema.properties.concepts });
+  }
+  if ((taskName === 'rank' || taskName === 'rankEvidence') && Array.isArray(data?.concepts) && data.concepts.length) {
+    // Concept IDs are issued by the server (k1..k4), never copied from content.
+    const ids = data.concepts.map(c => c.id);
+    if (ids.length > 4 || ids.some((id, i) => id !== `k${i + 1}`)) throw new Error('Invalid concept envelope');
+    const base = TASKS[taskName].schema; const match = base.properties.matches.items;
+    return object({ ...base.properties, matches: array(object({ ...match.properties, covers: array({ type: 'string', enum: ids }) })) });
   }
   if (taskName !== 'handoff') return TASKS[taskName].schema;
   // IDs are generated locally, never copied from source content. Exact object
@@ -120,3 +128,16 @@ TASKS.rankEvidence.instruction += ' A useful component must contribute to the ac
 TASKS.rankEvidence.instruction += ' Write for a non-technical builder: no endpoint paths, HTTP verbs, method names, parameter names, protocol/implementation jargon or documentation commentary. Say Sends emails, not POST /sendEmail endpoint; Reads spreadsheet cells, not GET range with spreadsheetId. Do not call a publisher official, verified or safe; identity filtering is handled separately, and evidence can be self-asserted. Keep regional/subject restrictions when relevant. Generic automation/integration text is not evidence for a requested concrete operation; select the listing as an unconfirmed lead if that is all you have.';
 TASKS.rankEvidence.instruction += ' Relevance always beats the amount of documentation. Return direct named-product and core-action leads before marginal components, even if only their listing is readable. Prefer documentation evidence over the listing whenever it establishes the useful action: limited extra inputs/details are not a reason to discard the action itself. Omit wrong-purpose results altogether: managing owned business profiles is not discovery of arbitrary venues; searching a restricted facility catalogue is not a general address-to-coordinate service. Keep prose to the useful action, not implementation details.';
 TASKS.rankEvidence.instruction += ' Choose the candidate ID and supporting evidenceId FIRST, then write only the supported action. Before including it, check explicit exclusions in the original request: an excluded main action must be omitted completely, not returned as partial with a caveat. For product lookup from a barcode number, an API that generates barcode images is not useful; it provides the wrong output. For data conversion generally, respect input/output direction. Missing documentation may justify a neutral lead, but an expressly conflicting documented purpose may not.';
+
+// Concepts: an interpretation of the user's request only, returned with the
+// search phrases (no extra request). Ranking may then mark which concepts a
+// candidate's OWN cited evidence establishes; the server validates every ID.
+const conceptSchema = array(object({ label: string, icon: { type: 'string', enum: CONCEPT_ICONS }, words: array(string) }));
+const CONCEPTS = ` concepts: split the request into 2–4 distinct parts that a builder would need separate integrations or data for (a single-purpose request may have 1). Example: "Text farmers when a storm is coming" -> Weather (icon weather, words ["storm"]), Alerts (icon alert, words ["when", "coming"]), SMS (icon sms, words ["Text"]). label: 1–2 everyday words, at most 24 characters, naming the need, not a vendor. icon: the closest key from the schema enum; use generic when none fits. words: 1–3 words or short phrases copied EXACTLY from the request that express this part. Do not add needs the request does not state. For an unrelated request return concepts: [].`;
+TASKS.searchQueries.instruction += CONCEPTS;
+TASKS.searchQueries.schema = object({ queries: array(string), concepts: conceptSchema });
+TASKS.searchPlan.instruction += CONCEPTS;
+TASKS.searchPlan.schema = object({ ...TASKS.searchPlan.schema.properties, concepts: conceptSchema });
+const COVERS = ' When a concepts array is supplied, each match also has covers: the IDs of the supplied concepts that THIS candidate\'s cited evidence directly establishes. Use only supplied concept IDs. Topic similarity, the product name or remembered features are not coverage. Use [] when the evidence does not establish any concept. Coverage is not a claim that the integration was tested.';
+TASKS.rank.instruction += COVERS;
+TASKS.rankEvidence.instruction += COVERS;

@@ -13,13 +13,13 @@ import { inspectMcp } from './mcp-inspection.mjs';
 import { RankingEvidence } from './ranking-evidence.mjs';
 import { createHostedBoundary } from './hosted-boundary.mjs';
 
-export function createApp({ fetcher = fetchDocument, parser = parseInWorker, inspector = inspectMcp, catalog = new Catalog({ fetcher, indexed: true }), rankingEvidence = new RankingEvidence({ fetcher, parser }), evidenceSearch = false, store = new MemoryStore(), maxRequests = 90, frontendDir = null, ai = null, hosting = null } = {}) {
+export function createApp({ fetcher = fetchDocument, parser = parseInWorker, inspector = inspectMcp, catalog = new Catalog({ fetcher, indexed: true }), rankingEvidence = new RankingEvidence({ fetcher, parser }), evidenceSearch = false, store = new MemoryStore(), maxRequests = 90, frontendDir = null, ai = null, hosting = null, boundary = null } = {}) {
   const app = express();
   // Route matching must agree with the case-sensitive API quota classification.
   app.set('case sensitive routing', true);
   const pending = new Map();
-  const clearSession = owner => { for (const [controller, jobOwner] of pending) if (jobOwner === owner) controller.abort(); store.clear(owner); };
-  const hosted = hosting === null ? null : createHostedBoundary(hosting, { onExpire: clearSession });
+  const clearSession = async owner => { for (const [controller, jobOwner] of pending) if (jobOwner === owner) controller.abort(); await store.clear(owner); await boundary?.clearSession(owner); };
+  const hosted = boundary || (hosting === null ? null : createHostedBoundary(hosting, { onExpire: owner => { void clearSession(owner); } }));
   app.locals.dispose = () => { for (const controller of pending.keys()) controller.abort(); hosted?.close(); store.close(); catalog.close?.(); rankingEvidence.close?.(); };
   app.disable('x-powered-by');
   app.set('etag', false);
@@ -42,21 +42,38 @@ export function createApp({ fetcher = fetchDocument, parser = parseInWorker, ins
     if (['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is('application/json')) return next(new AppError('JSON_REQUIRED', 'Send an application/json request body.', 415));
     next();
   });
-  app.use(express.json({ limit: '64kb', strict: true }));
+  app.use(express.json({ limit: store.transport ? '4mb' : '64kb', strict: true }));
+  app.use((req, _res, next) => {
+    // Only authenticated encrypted transport may exceed the original 64 KiB
+    // input limit. Keep user-authored payload limits unchanged.
+    if (store.transport && req.body) {
+      const { _records, ...input } = req.body;
+      if (Buffer.byteLength(JSON.stringify(input)) > 65536) return next(new AppError('BODY_TOO_LARGE', 'Keep requests under 64 KiB.', 413));
+      if (_records !== undefined && (!_records || typeof _records !== 'object' || Array.isArray(_records) || Object.keys(_records).length > 5 || Object.values(_records).some(v => typeof v !== 'string'))) return next(new AppError('INVALID_RECORDS', 'Invalid session record transport.', 400));
+      req.recordTokens = _records; req.body = input;
+    }
+    next();
+  });
   const job = handler => async (req, res, next) => {
     if (hosted && [...pending.values()].filter(owner => owner === req.sessionId).length >= 2) return next(new AppError('BUSY', 'Two jobs are already running in this session. Try again shortly.', 429));
     if (activeJobs >= 4) return next(new AppError('BUSY', 'Four discovery/analysis jobs are already running. Try again shortly.', 429));
-    activeJobs++;
     const controller = new AbortController();
+    let release;
+    try { release = await hosted?.acquireJob?.(req, controller); } catch (error) { return next(error); }
+    activeJobs++;
+    const deadline = boundary ? setTimeout(() => {
+      controller.abort();
+      if (!res.headersSent) res.status(504).json({ error: { code: 'JOB_TIMEOUT', message: 'This request took too long. Try fewer integrations or a more specific documentation link.' } });
+    }, 280000).unref() : null;
     const cancel = () => { if (!res.writableEnded) controller.abort(); };
     pending.set(controller, req.sessionId ?? null); req.jobSignal = controller.signal; res.once('close', cancel);
-    try { await handler(req, res); } catch (error) { next(error); } finally { activeJobs--; pending.delete(controller); res.off('close', cancel); }
+    try { await handler(req, res); } catch (error) { next(error); } finally { clearTimeout(deadline); activeJobs--; pending.delete(controller); res.off('close', cancel); await release?.(); }
   };
   const put = (req, value) => store.put(value, req.sessionId ?? null);
-  const record = (req, id, kind) => { const value = store.get(id, req.sessionId ?? null); if (value.kind !== kind) fail('RECORD_TYPE', 'This record is not the requested type.', 404); return value; };
-  const aiOptions = req => {
+  const record = async (req, id, kind) => { const value = await store.get(id, req.sessionId ?? null, req.recordTokens); if (value.kind !== kind) fail('RECORD_TYPE', 'This record is not the requested type.', 404); return value; };
+  const aiOptions = async req => {
     if (!ai) fail('AI_NOT_READY', 'AI assistance is not configured on this server.', 503);
-    hosted?.admitAi(req);
+    await hosted?.admitAi(req);
     return { ai: req.body.ai, aiConsent: req.body.aiConsent, signal: req.jobSignal };
   };
   const preflightAi = async options => {
@@ -70,20 +87,23 @@ export function createApp({ fetcher = fetchDocument, parser = parseInWorker, ins
     assertNoSecrets(value); return value.trim();
   };
   const discover = async (req, query, request, options, signal) => {
-    const result = await catalog.search({ ...request, query, limit: 24 }, { signal });
+    const { concepts: requestConcepts, ...searchRequest } = request;
+    const result = await catalog.search({ ...searchRequest, query, limit: 24 }, { signal });
     signal.throwIfAborted();
     const candidates = evidenceSearch && options && result.items.length ? await rankingEvidence.enrich(result.items, query, { signal, searchQueries: request.queries }) : result.items;
-    const ranked = options && candidates.length ? await ai.rank(query, candidates, options) : { items: candidates.map(item => ({ ...item, signals: documentationSignal(item) })), uncovered: [] };
+    const concepts = options ? requestConcepts || [] : [];
+    const ranked = options && candidates.length ? await ai.rank(query, candidates, options, concepts) : { items: candidates.map(item => ({ ...item, signals: documentationSignal(item) })), uncovered: [] };
     if (options && !ranked.items.length && request.constraints?.some(c => c.mode === 'include' && (c.scope === 'product' || candidates.length === 1))) {
       // A literal product finder should still surface the named listing when its
       // requested capability is not established. This is not a fit endorsement.
       ranked.items = candidates.slice(0, 3).map(item => ({ ...item, rankingOrder: 'relevance-first-v3', signals: documentationSignal(item),
-        match: { tier: 'partial', reason: 'Matches the requested product name. Its fit for this feature still needs checking.', gap: '', basis: 'Identity-only directory lead; requested capability not established.' } }));
+        match: { tier: 'partial', reason: 'Matches the requested product name. Its fit for this feature still needs checking.', gap: '', basis: 'Identity-only directory lead; requested capability not established.', covers: [] } }));
     }
     signal.throwIfAborted();
     const nextRequest = result.pagination.nextOffset !== null ? { ...request, offset: result.pagination.nextOffset }
       : result.pagination.nextMcpCursor ? { ...request, source: 'mcp', offset: 0, mcpCursor: result.pagination.nextMcpCursor } : null;
-    return put(req, { kind: 'discovery', query, ...ranked, sources: result.sources, nextRequest,
+    // Concepts are an AI reading of the request, shown as labels; keyword mode has none.
+    return put(req, { kind: 'discovery', query, ...ranked, concepts, sources: result.sources, nextRequest,
       ranking: { mode: options ? 'ai-ranked-directory-leads' : 'keyword-search', experimentalEvidenceSearch: evidenceSearch, reviewed: result.items.length, documentationRead: candidates.filter(c => c.rankingEvidence?.status === 'documentation-read').length, matchesInLoadedMetadata: result.pagination.matchesInLoadedMetadata, reliability: evidenceSearch ? 'Selected documentation informs ordering; operational reliability has not been measured.' : 'Documentation links inform ordering; operational reliability has not been measured.' }, coverage: result.coverage });
   };
 
@@ -94,27 +114,29 @@ export function createApp({ fetcher = fetchDocument, parser = parseInWorker, ins
   app.post('/api/discover', job(async (req, res) => {
     const query = projectQuery(req.body.query); const source = req.body.source || 'api';
     if (!['api', 'mcp', 'all'].includes(source)) fail('INVALID_SEARCH', 'Choose APIs, MCP servers or all sources.');
-    const options = req.body.ai === true ? aiOptions(req) : null;
-    const plan = options ? (evidenceSearch && ai.searchPlan ? await ai.searchPlan(query, options) : { queries: await ai.searchQueries(query, options), constraints: [] }) : undefined;
+    const options = req.body.ai === true ? await aiOptions(req) : null;
+    const interpreted = options ? (evidenceSearch && ai.searchPlan ? await ai.searchPlan(query, options) : await ai.searchQueries(query, options)) : undefined;
+    const plan = interpreted && (Array.isArray(interpreted) ? { queries: interpreted, constraints: [], concepts: [] } : { constraints: [], concepts: [], ...interpreted });
     const queries = plan?.queries;
     req.jobSignal.throwIfAborted();
-    if (queries && !queries.length) return res.json({ query, items: [], sources: [], nextRequest: null, ranking: { mode: 'needs-api-request', reviewed: 0 }, uncovered: ['Describe an API capability or the product you want to build.'] });
-    res.json(await discover(req, query, { source, ...(queries ? { queries, constraints: plan.constraints, mcpPages: 3 } : {}) }, options, req.jobSignal));
+    if (queries && !queries.length) return res.json({ query, items: [], concepts: [], sources: [], nextRequest: null, ranking: { mode: 'needs-api-request', reviewed: 0 }, uncovered: ['Describe an API capability or the product you want to build.'] });
+    // Concepts stay in nextRequest so "more" batches use the same labels.
+    res.json(await discover(req, query, { source, ...(queries ? { queries, constraints: plan.constraints, concepts: plan.concepts, mcpPages: 3 } : {}) }, options, req.jobSignal));
   }));
   app.post('/api/discover/:id/more', job(async (req, res) => {
-    const previous = record(req, req.params.id, 'discovery');
+    const previous = await record(req, req.params.id, 'discovery');
     if (!previous.nextRequest) fail('NO_MORE_RESULTS', 'There are no more entries in this source view.');
-    const options = req.body.ai === true ? aiOptions(req) : null;
+    const options = req.body.ai === true ? await aiOptions(req) : null;
     res.json(await discover(req, previous.query, previous.nextRequest, options, req.jobSignal));
   }));
   app.post('/api/summaries', job(async (req, res) => {
-    const options = aiOptions(req);
+    const options = await aiOptions(req);
     const query = req.body.query === undefined || req.body.query === '' ? '' : projectQuery(req.body.query);
     const selection = integrationInput(req.body.integration || { url: req.body.url });
     await preflightAi(options);
     const analysis = await readIntegration(selection, query, { fetcher, parser, inspector, signal: req.jobSignal });
     const summary = analysis.documentationStatus.state === 'unavailable' ? unavailableExplanation() : await ai.summarize(analysis, options, query);
-    if (!req.jobSignal.aborted) res.json(put(req, { kind: 'summary', query, title: analysis.integration.name, integrationKind: analysis.integration.kind,
+    if (!req.jobSignal.aborted) res.json(await put(req, { kind: 'summary', query, title: analysis.integration.name, integrationKind: analysis.integration.kind,
       documentationStatus: analysis.documentationStatus, documentationNote: analysis.documentationNote, source: analysis.source, evidence: analysis.evidence, summary }));
   }));
   app.post('/api/build-briefs', job(async (req, res) => {
@@ -127,7 +149,7 @@ export function createApp({ fetcher = fetchDocument, parser = parseInWorker, ins
     if (!Array.isArray(unlinked) || unlinked.length + selections.length > 5 || unlinked.some(name => typeof name !== 'string' || !name.trim() || name.length > 200)) fail('INVALID_CANDIDATES', 'Choose at most five integrations with valid names.');
     assertNoSecrets(unlinked);
     // Reject unsafe links before fetching or storing any partial-result record.
-    const options = aiOptions(req); const analyses = []; const unreadable = unlinked.map(name => ({ name, message: 'No documentation link was available. Check this integration before building.' }));
+    const options = await aiOptions(req); const analyses = []; const unreadable = unlinked.map(name => ({ name, message: 'No documentation link was available. Check this integration before building.' }));
     await preflightAi(options);
     for (const selection of selections) {
       req.jobSignal.throwIfAborted();
@@ -140,43 +162,44 @@ export function createApp({ fetcher = fetchDocument, parser = parseInWorker, ins
     }
     if (!analyses.length) fail('NO_READABLE_DOCS', 'Capabilities couldn’t be verified for these selections. No AI credits were used and no build brief was generated.', 422);
     const result = await ai.handoff(query, analyses, options);
-    if (!req.jobSignal.aborted) res.status(201).json(put(req, { kind: 'build-brief', query, ...result, unreadable }));
+    if (!req.jobSignal.aborted) res.status(201).json(await put(req, { kind: 'build-brief', query, ...result, unreadable }));
   }));
-  app.get('/api/build-briefs/:id/download', (req, res) => res.type('text/markdown').set('Content-Disposition', 'attachment; filename="apifit-build-brief.md"').send(exportHandoff(record(req, req.params.id, 'build-brief'))));
+  const readRoute = (path, handler) => { app.get(path, handler); if (store.transport) app.post(path, handler); };
+  readRoute('/api/build-briefs/:id/download', async (req, res) => res.type('text/markdown').set('Content-Disposition', 'attachment; filename="apifit-build-brief.md"').send(exportHandoff(await record(req, req.params.id, 'build-brief'))));
   app.post('/api/analyses', job(async (req, res) => {
     const { url, offset = 0, limit = 100 } = req.body;
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) fail('INVALID_PAGE', 'Use a valid offset and a page size between 1 and 100.');
-      if (req.body.ai === true) await preflightAi(aiOptions(req));
+      if (req.body.ai === true) await preflightAi(await aiOptions(req));
       const source = await fetcher(url, { signal: req.jobSignal });
       if (req.jobSignal.aborted) return;
       const analysis = await parser(source, { offset, limit });
-      if (req.body.ai === true) analysis.aiExplanation = await ai.explain(analysis, aiOptions(req));
-      if (!req.jobSignal.aborted) res.status(201).json(put(req, analysis));
+      if (req.body.ai === true) analysis.aiExplanation = await ai.explain(analysis, await aiOptions(req));
+      if (!req.jobSignal.aborted) res.status(201).json(await put(req, analysis));
   }));
-  app.get('/api/analyses/:id', (req, res) => res.json(record(req, req.params.id, 'analysis')));
+  readRoute('/api/analyses/:id', async (req, res) => res.json(await record(req, req.params.id, 'analysis')));
   app.post('/api/requirements/draft', job(async (req, res) => {
-    const options = req.body.ai === true ? aiOptions(req) : null;
+    const options = req.body.ai === true ? await aiOptions(req) : null;
     const result = options ? await ai.draft(req.body.text, options) : draftRequirements(req.body.text);
     if (!req.jobSignal.aborted) res.json(result);
   }));
   app.post('/api/assessments', job(async (req, res) => {
     const { analysisIds, requirements, confirmed } = req.body;
     if (!Array.isArray(analysisIds) || !analysisIds.length || analysisIds.length > 5 || analysisIds.some(id => typeof id !== 'string')) fail('INVALID_CANDIDATES', 'Choose between 1 and 5 analysis IDs.');
-    const analyses = analysisIds.map(id => record(req, id, 'analysis'));
+    const analyses = await Promise.all(analysisIds.map(id => record(req, id, 'analysis')));
     const input = { requirements, confirmed, analyses };
-    const options = req.body.ai === true ? aiOptions(req) : null;
+    const options = req.body.ai === true ? await aiOptions(req) : null;
     const result = options ? await ai.assessment(input, options) : assess(input);
-    if (!req.jobSignal.aborted) res.status(201).json(put(req, result));
+    if (!req.jobSignal.aborted) res.status(201).json(await put(req, result));
   }));
-  app.get('/api/assessments/:id', (req, res) => res.json(record(req, req.params.id, 'assessment')));
-  app.get('/api/assessments/:id/brief', (req, res) => {
-    res.type('text/markdown').set('Content-Disposition', 'attachment; filename="apifit-decision-brief.md"').send(exportBrief(record(req, req.params.id, 'assessment')));
+  readRoute('/api/assessments/:id', async (req, res) => res.json(await record(req, req.params.id, 'assessment')));
+  readRoute('/api/assessments/:id/brief', async (req, res) => {
+    res.type('text/markdown').set('Content-Disposition', 'attachment; filename="apifit-decision-brief.md"').send(exportBrief(await record(req, req.params.id, 'assessment')));
   });
-  app.delete('/api/records/:id', (req, res) => { store.delete(req.params.id, req.sessionId ?? null); res.status(204).end(); });
-  app.delete('/api/session', (req, res) => { clearSession(req.sessionId ?? null); res.status(204).end(); });
+  app.delete('/api/records/:id', async (req, res) => { await store.delete(req.params.id, req.sessionId ?? null); res.status(204).end(); });
+  app.delete('/api/session', async (req, res) => { await clearSession(req.sessionId ?? null); res.status(204).end(); });
   if (frontendDir) app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
-    res.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+    res.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com/beacon.min.js; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
     return express.static(frontendDir, { dotfiles: 'deny', redirect: false })(req, res, next);
   });
   app.use((_req, _res, next) => next(new AppError('NOT_FOUND', 'This backend route does not exist.', 404)));

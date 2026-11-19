@@ -16,6 +16,14 @@ The application does not automatically load `.env` files.
 | `APIFIT_AI_ENABLED` | `true`, still subject to readiness and consent | Defaults `false`; strict `true` or `false` |
 | `ANTHROPIC_API_KEY` | Ignored; macOS Keychain is used | Backend runtime secret, only when hosted AI is enabled |
 
+Vercel's `api/index.js` entry uses three additional runtime secrets:
+`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (read/write REST token),
+and `APIFIT_RECORD_SECRET` (32 cryptographically random bytes, lowercase hex).
+It does not use `APIFIT_DATA_DIR`. Keep the record secret stable across replicas
+and deployments; rotation invalidates existing tab records. Never expose any
+of these through a `VITE_` variable. Use a separate empty Free database for tests;
+never seed a production budget from a fixture. See [Vercel setup](vercel-migration.md).
+
 Invalid hosted configuration fails startup. Never log the returned configuration
 object: password mode contains an access secret. In password mode the login
 username is `apifit`; generate a random password in a password manager. Basic

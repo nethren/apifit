@@ -1,0 +1,26 @@
+name: Refresh deployed public catalogue
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
+permissions:
+  contents: read
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      DEPLOY_HOOK: ${{ secrets.VERCEL_CATALOG_DEPLOY_HOOK }}
+    steps:
+      - name: Request rebuild of the configured Vercel project
+        shell: bash
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo '::error::Set VERCEL_CATALOG_DEPLOY_HOOK to enable daily catalogue refresh.'
+            exit 1
+          fi
+          case "$DEPLOY_HOOK" in
+            https://api.vercel.com/v1/integrations/deploy/*) ;;
+            *) echo '::error::Invalid deployment hook origin.'; exit 1 ;;
+          esac
+          curl --fail --silent --show-error --max-time 30 --request POST "$DEPLOY_HOOK" --output /dev/null

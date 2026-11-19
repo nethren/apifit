@@ -11,6 +11,15 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      redis:
+        image: redis:7.4.6-alpine
+        ports:
+          - 16379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 5
+    env:
+      APIFIT_TEST_REDIS_CLI: /usr/bin/redis-cli
+      APIFIT_TEST_REDIS_PORT: '16379'
     strategy:
       matrix:
         node: [22, 24]
@@ -21,6 +30,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: sudo apt-get update && sudo apt-get install -y redis-tools
       - run: npm run repo:check
       - run: npm run check
   container:

@@ -2,6 +2,7 @@ import { fail } from './errors.mjs';
 import { plain } from './text.mjs';
 export { exportHandoff } from '../shared/brief-export.mjs';
 import { explanationContext, validateGoalExplanation } from './goal-explanation.mjs';
+import { CONCEPT_ICONS } from '../shared/concept-icons.mjs';
 
 const invalid = () => fail('AI_INVALID_RESULT', 'The AI response could not be verified. No invented result was used.', 502);
 const exact = (value, keys) => { if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) invalid(); };
@@ -17,6 +18,32 @@ export function validateSearchQueries(value) {
   // such as "Not Boring API". This is not a general natural-language parser.
   return [...new Set(value.queries.map(q => q.replace(/\s+(?:not|no|excluding|except|without|avoid(?:ing)?)\s+.*$/i, '').trim()).filter(Boolean))];
 }
+// Concepts label parts of the user's OWN request (storm -> Weather). They are
+// not integration evidence. Each must be anchored in words copied from the
+// request; anything else is dropped rather than failing the search, because
+// concepts are presentational and a search must not depend on them.
+export function validateConcepts(value, query) {
+  if (!Array.isArray(value)) return [];
+  const request = String(query || '').toLowerCase();
+  const seen = new Set();
+  return value.slice(0, 8).flatMap(concept => {
+    if (!concept || typeof concept !== 'object' || Array.isArray(concept) || Object.keys(concept).length !== 3 || !['label', 'icon', 'words'].every(k => Object.hasOwn(concept, k))) return [];
+    const label = typeof concept.label === 'string' ? concept.label.trim() : '';
+    if (!label || label.length > 24 || /[\u0000-\u001f]/.test(label) || !CONCEPT_ICONS.includes(concept.icon) || !Array.isArray(concept.words)) return [];
+    const words = [...new Set(concept.words.filter(w => typeof w === 'string').map(w => w.trim()).filter(w => w && w.length <= 40 && request.includes(w.toLowerCase())))].slice(0, 3);
+    if (!words.length || seen.has(label.toLowerCase())) return [];
+    seen.add(label.toLowerCase());
+    return [{ label, icon: concept.icon, words }];
+  }).slice(0, 4).map((concept, i) => ({ id: `k${i + 1}`, ...concept }));
+}
+// Coverage is accepted only as a subset of the server-issued concept IDs, in
+// concept order. Unknown or repeated IDs are dropped, never mapped or guessed.
+export function conceptCoverage(covers, concepts = []) {
+  if (!concepts.length || !Array.isArray(covers)) return [];
+  const claimed = new Set(covers.filter(id => typeof id === 'string'));
+  return concepts.map(c => c.id).filter(id => claimed.has(id));
+}
+export const conceptPrompt = concepts => concepts.map(({ id, label, words }) => ({ id, label, requestWords: words }));
 export function directoryContext(items) {
   return items.map((item, index) => ({ id: `c${index + 1}`, evidenceId: `c${index + 1}`, excerpt: `Name: ${plain(item.name, 200)}\nProduct: ${plain(item.product, 200)}\nDescription: ${plain(item.description, 950)}` }));
 }
@@ -32,12 +59,12 @@ export function rankingContext(items) {
     evidence: [{ id: `c${i + 1}.listing`, basis: 'directory-only', excerpt: plain(item.description, 500) || plain(item.name, 200) },
       ...(item.rankingEvidence?.excerpts || []).map((e, j) => ({ id: `c${i + 1}.d${j + 1}`, basis: 'documentation', excerpt: e.excerpt }))] }));
 }
-export function validateEvidenceRanking(value, items, context) {
+export function validateEvidenceRanking(value, items, context, concepts = []) {
   exact(value, ['matches', 'uncovered']); list(value.matches, 12); list(value.uncovered, 1);
   value.uncovered.forEach(line => text(line, 180));
   const seen = new Set(); let withheldMatches = 0;
   const ranked = value.matches.flatMap((match, order) => {
-    exact(match, ['id', 'tier', 'reason', 'gap', 'evidenceId']);
+    exact(match, ['id', 'tier', 'reason', 'gap', 'evidenceId', ...(concepts.length ? ['covers'] : [])]);
     const index = context.findIndex(c => c.id === match.id);
     if (index < 0 || seen.has(match.id) || !['close', 'partial'].includes(match.tier)) invalid();
     seen.add(match.id);
@@ -50,7 +77,9 @@ export function validateEvidenceRanking(value, items, context) {
       reason: documented ? match.reason : 'Potential match from its listing. Open an explanation to check its capabilities.',
       gap: documented ? match.gap : '', quote: evidence.excerpt,
       evidenceId: evidence.id, source: documented ? item.rankingEvidence.source : item.source,
-      basis: documented ? 'AI interpretation of selected documentation; not verified feasibility.' : 'Directory-only lead; no capability claim accepted.' },
+      basis: documented ? 'AI interpretation of selected documentation; not verified feasibility.' : 'Directory-only lead; no capability claim accepted.',
+      // A directory-only lead has no accepted capability claim, so it covers nothing.
+      covers: documented ? conceptCoverage(match.covers, concepts) : [] },
       signals: documentationSignal(item), rankingOrder: 'relevance-first-v3', order }];
   });
   if (withheldMatches && !ranked.length) invalid();
@@ -59,13 +88,13 @@ export function validateEvidenceRanking(value, items, context) {
   ranked.sort((a, b) => a.order - b.order);
   return { items: ranked.map(({ order, ...item }) => item), uncovered: value.uncovered, withheldMatches };
 }
-export function validateRanking(value, items, context) {
+export function validateRanking(value, items, context, concepts = []) {
   exact(value, ['matches', 'uncovered']); list(value.matches, 12); list(value.uncovered, 1);
   value.uncovered.forEach(line => text(line, 180));
   const seen = new Set();
   let withheldMatches = 0;
   const ranked = value.matches.flatMap((match, order) => {
-    exact(match, ['id', 'tier', 'reason', 'gap', 'quote']);
+    exact(match, ['id', 'tier', 'reason', 'gap', 'quote', ...(concepts.length ? ['covers'] : [])]);
     const index = context.findIndex(c => c.id === match.id);
     if (index < 0 || seen.has(match.id) || !['close', 'partial'].includes(match.tier)) invalid();
     seen.add(match.id);
@@ -83,7 +112,7 @@ export function validateRanking(value, items, context) {
     const identityOnly = match.quote.split('\n').every(line => identityLines.includes(line));
     if (identityOnly) {
       return [{ ...item, match: { tier: 'partial', reason: 'Listed under this name. Open an explanation to check how it could help.', gap: '',
-        quote: match.quote, basis: 'Directory identity only; capabilities have not been checked.' }, signals: documentationSignal(item), order }];
+        quote: match.quote, basis: 'Directory identity only; capabilities have not been checked.', covers: [] }, signals: documentationSignal(item), order }];
     }
     // Discovery has not checked ownership, trust or operational quality. If a
     // model nevertheless adds such an assurance, retain only a neutral listing
@@ -91,9 +120,9 @@ export function validateRanking(value, items, context) {
     // verification and does not repair other unsupported capability statements.
     if (/\b(?:official(?:ly)?|verified|certified|trusted|guaranteed|safe|secure|reliable|uptime)\b/i.test(`${match.reason} ${match.gap}`)) {
       return [{ ...item, match: { tier: 'partial', reason: 'Found in public listings. Open an explanation to check what it can do.', gap: '',
-        quote: `Name: ${plain(item.name, 200)}`, basis: 'Directory listing only; an unverified assurance was withheld.' }, signals: documentationSignal(item), order }];
+        quote: `Name: ${plain(item.name, 200)}`, basis: 'Directory listing only; an unverified assurance was withheld.', covers: [] }, signals: documentationSignal(item), order }];
     }
-    return [{ ...item, match: { tier: match.tier, reason: match.reason, gap: match.gap, quote: match.quote, basis: 'AI interpretation of directory metadata, not verified feasibility.' }, signals: documentationSignal(item), order }];
+    return [{ ...item, match: { tier: match.tier, reason: match.reason, gap: match.gap, quote: match.quote, basis: 'AI interpretation of directory metadata, not verified feasibility.', covers: conceptCoverage(match.covers, concepts) }, signals: documentationSignal(item), order }];
   });
   if (withheldMatches && !ranked.length) invalid();
   // The model has already ordered by relevance. Evidence caveats must not push

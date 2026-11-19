@@ -1,14 +1,60 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { PaperPlaneTilt, Timer, Prohibit, Info } from '@phosphor-icons/react';
 import { Dialog, Notice, ExternalLink } from './components.jsx';
+
+// The allowance ring is an SVG arc set through attributes (the CSP forbids
+// inline style attributes). Values come from /ai/status, never a placeholder.
+export function AllowanceRing({ budget, size = 18, label = false }) {
+  const limit = budget?.limitUsd || 0; const remaining = Math.max(0, budget?.remainingUsd || 0);
+  const share = limit > 0 ? Math.min(1, remaining / limit) : 0;
+  return <svg className={`ring ${label ? 'big' : ''}`} viewBox="0 0 36 36" width={size} height={size} aria-hidden="true">
+    <circle className="ring-track" cx="18" cy="18" r="15.5" pathLength="100"/>
+    <circle className="ring-fill" cx="18" cy="18" r="15.5" pathLength="100" strokeDasharray={`${(share * 100).toFixed(1)} 100`} transform="rotate(-90 18 18)"/>
+  </svg>;
+}
+
+export function AiPopover({ status, enabled, onEnabled, onClose, context = '', onContinue, anchor }) {
+  const ref = useRef(null);
+  const ready = Boolean(status?.ready); const on = enabled && ready;
+  const budget = status?.budget;
+  useEffect(() => {
+    const previous = document.activeElement;
+    ref.current?.querySelector('button:not(:disabled), summary')?.focus({ preventScroll: true });
+    const key = e => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    const outside = e => { if (!ref.current?.contains(e.target) && !anchor?.current?.contains(e.target)) onClose(); };
+    document.addEventListener('keydown', key); document.addEventListener('pointerdown', outside);
+    return () => { document.removeEventListener('keydown', key); document.removeEventListener('pointerdown', outside); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, [onClose, anchor]);
+  return <div className="pop" ref={ref} role="dialog" aria-modal="false" aria-labelledby="ai-pop-title">
+    {context && <p className="pop-context">{context}</p>}
+    <div className="gauge">
+      <div className="big-ring"><AllowanceRing budget={budget} size={72} label/><span>{budget ? `$${budget.remainingUsd.toFixed(2)}` : '–'}</span></div>
+      <div><b id="ai-pop-title">AI matching</b><small>{budget && !budget.available ? 'Allowance paused on this server' : budget?.limitUsd ? `left of a $${budget.limitUsd.toFixed(0)} shared allowance` : ready ? 'Shared allowance' : 'Unavailable right now'}</small></div>
+      <button type="button" className="switch" role="switch" aria-checked={on} aria-label="Use AI" disabled={!ready} onClick={() => onEnabled(!on)}/>
+    </div>
+    {(status?.issue || !ready) && <p className="pop-issue">{status?.issue || 'AI is off on this server. Keyword search still works.'}</p>}
+    <ul className="facts">
+      <li data-tip="Your words and public docs go to Anthropic"><PaperPlaneTilt size={22} weight="light" aria-hidden="true"/>Sent to Claude</li>
+      <li data-tip="APIFit’s records expire after 15 minutes"><Timer size={22} weight="light" aria-hidden="true"/>Gone in 15 min</li>
+      <li className="no" data-tip="No keys collected. No API or tool is run."><Prohibit size={22} weight="light" aria-hidden="true"/>No keys or runs</li>
+    </ul>
+    <details className="more-info"><summary><Info size={15} weight="light" aria-hidden="true"/>Details</summary>
+      <p>Claude Haiku ranks a batch of directory listings for your idea and splits it into the parts shown as icons. Explanations and build briefs are made only when you ask. Shortlisting makes no AI call. Turn AI off for free keyword search.</p>
+      <p>AI requests send your request and relevant public documentation to Anthropic. Keep credentials, sensitive personal data and confidential material out. APIFit’s backend records expire after 15 minutes; this tab keeps its view until reloaded. Anthropic’s standard API retention is generally up to 30 days, with exceptions. Source quotes are checked, but relevance is not tested feasibility or provider reliability. No API or MCP tool is executed. Usage is covered by the site owner; pending charges stay reserved.</p>
+      <ExternalLink href="https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data">Anthropic retention policy</ExternalLink>
+    </details>
+    {context && <div className="pop-foot"><button type="button" className="btn ghost press" onClick={onClose}>Not now</button><button type="button" className="btn primary press" disabled={!on} onClick={onContinue}>Continue</button></div>}
+  </div>;
+}
 
 export function AiControls({ status, enabled, onEnabled, onRefresh, onClose, onDone = onClose, context = '' }) {
   return <Dialog title="AI assistance" onClose={onClose}>
     <p className="dialog-intro">Clearer explanations. Evidence you can check.</p>
     {context && <Notice>{context}</Notice>}
     <p>Claude Haiku 4.5 finds and ranks API options for your request. Explanations and build briefs are generated only when you ask. Saving or removing an API makes no AI call. Turn AI off for free keyword search.</p>
-    <Notice>{status?.ready ? 'AI is configured on the server. Provider access is only checked when you make an AI request.' : 'AI is unavailable until the operator enables it with a secure server credential and available budget. Never paste a key here.'}</Notice>
-    {status?.budget && <p><strong>US${status.budget.remainingUsd.toFixed(3)} remaining</strong> in the shared US$5 development budget. Pending or uncertain charges stay reserved.</p>}
-    <label className="confirmation"><input type="checkbox" checked={enabled} disabled={!status?.ready} onChange={e => onEnabled(e.target.checked)}/><span>Enable AI for this tab. I agree to send my project requirements and selected public documentation excerpts to Anthropic when I use AI-assisted features.</span></label>
+    <Notice>{status?.issue || (status?.ready ? 'AI is configured on the server. Provider access is only checked when you make an AI request.' : 'AI is unavailable until the operator enables it with a secure server credential and available budget. Never paste a key here.')}</Notice>
+    {status?.budget && <p><strong>US${status.budget.remainingUsd.toFixed(3)} remaining</strong> in APIFit’s shared AI allowance. Usage is covered by the site owner. Pending or uncertain charges stay reserved.</p>}
+    <label className="confirmation"><input type="checkbox" checked={enabled && Boolean(status?.ready)} disabled={!status?.ready} onChange={e => onEnabled(e.target.checked)}/><span>Use AI for this tab. AI-assisted actions send your request and relevant public documentation to Anthropic. Turn this off for keyword search.</span></label>
     <p className="muted">Keep credentials, sensitive personal data and confidential material out of requests. APIFit’s backend records expire after 15 minutes; this tab keeps its view until cleared or reloaded. Anthropic’s standard API retention is generally up to 30 days, with exceptions. This setting is not saved after a reload.</p>
     <p className="muted">AI search interprets your request, then ranks a batch of directory listings. Finding more options makes another ranking request. Summaries are reused when reopened in this tab. Source quotes are checked, but relevance is not verified feasibility or provider reliability. No API or MCP tool is executed.</p>
     <ExternalLink href="https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data">Anthropic retention policy</ExternalLink>

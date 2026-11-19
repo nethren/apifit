@@ -1,8 +1,12 @@
 # Deployment — public, single-instance app
 
+> This is the original Node/Docker recipe. For the owner-selected free Vercel
+> deployment, use [Vercel migration and setup](vercel-migration.md) instead.
+
 The owner approved a public app with paid AI available and a public MIT source
 repository. This is a preparation recipe, not an already deployed service.
-Hosting and a domain are still to be chosen. The owner handles the demo; Postman
+The owner subsequently selected Vercel Hobby and `apifit.nethren.com`; the
+instructions below remain an alternative deployment architecture. The owner handles the demo; Postman
 is out of scope. No additional spending allowance was approved.
 
 ## Host requirements
@@ -13,7 +17,8 @@ is out of scope. No additional spending allowance was approved.
 - Runtime-secret storage and outbound public HTTPS/DNS access.
 
 Client and API share one origin. Static-only hosting and ephemeral functions
-are insufficient. Forwarded headers are not trusted. Configure ingress Host
+are insufficient for **this file-backed recipe**; use the separate Vercel adapter
+for ephemeral functions. Forwarded headers are not trusted. Configure ingress Host
 preservation rather than disabling validation. Review the
 [Node support schedule](https://github.com/nodejs/Release) and base image at each
 release. The recipe uses Node 22.

@@ -3,7 +3,7 @@ import { assertNoSecrets } from './ai-client.mjs';
 import { assess, decision, validateFindings } from './assessment.mjs';
 import { hash } from './text.mjs';
 import { fail } from './errors.mjs';
-import { validateSearchQueries, directoryContext, validateRanking, rankingContext, validateEvidenceRanking, handoffContext, validateHandoff } from './search-ai.mjs';
+import { validateSearchQueries, directoryContext, validateRanking, rankingContext, validateEvidenceRanking, handoffContext, validateHandoff, validateConcepts, conceptPrompt } from './search-ai.mjs';
 import { validateSearchPlan } from './search-intent.mjs';
 import { validateCitations, evidenceContext } from './ai-evidence.mjs';
 import { explanationContext, validateGoalExplanation } from './goal-explanation.mjs';
@@ -102,7 +102,7 @@ export class AiService {
     this.busy = true;
     try {
       const status = await this.status();
-      if (!status.ready) fail('AI_NOT_READY', 'AI is not ready. The operator should check the server credential and development budget.', 503);
+      if (!status.ready) fail('AI_NOT_READY', 'AI is currently unavailable. You can still use keyword search. The site owner can check provider access and the AI allowance.', 503);
       if (options.signal?.aborted) fail('AI_CANCELLED', 'AI request cancelled.', 499);
       return await action();
     } finally { this.busy = false; }
@@ -112,15 +112,23 @@ export class AiService {
     assertNoSecrets(original);
     return this.authorized(options, async () => ({ ...validateDraft(await this.client.run('request', { request: original }, options), original), provenance: provenance() }));
   }
+  // Concepts ride on the same interpretation request: no extra paid call. The
+  // search phrases keep their strict validation; invalid concepts are dropped.
   searchQueries(query, options) {
     assertNoSecrets(query);
-    return this.authorized(options, async () => validateSearchQueries(await this.client.run('searchQueries', { request: query }, options)));
+    return this.authorized(options, async () => {
+      const { concepts, ...rest } = await this.client.run('searchQueries', { request: query }, options) || {};
+      return { queries: validateSearchQueries(rest), concepts: validateConcepts(concepts, query) };
+    });
   }
   searchPlan(query, options) {
     assertNoSecrets(query);
-    return this.authorized(options, async () => validateSearchPlan(await this.client.run('searchPlan', { request: query }, options), query));
+    return this.authorized(options, async () => {
+      const { concepts, ...rest } = await this.client.run('searchPlan', { request: query }, options) || {};
+      return { ...validateSearchPlan(rest, query), concepts: validateConcepts(concepts, query) };
+    });
   }
-  rank(query, items, options) {
+  rank(query, items, options, concepts = []) {
     assertNoSecrets(query);
     const enriched = items.some(item => item.rankingEvidence);
     // Omit public listings containing credential-like examples. Never weaken
@@ -131,7 +139,7 @@ export class AiService {
     });
     const context = enriched ? rankingContext(safeItems) : directoryContext(safeItems);
     return this.authorized(options, async () => ({
-      ...(safeItems.length ? (enriched ? validateEvidenceRanking : validateRanking)(await this.client.run(enriched ? 'rankEvidence' : 'rank', { request: query, candidates: context }, options), safeItems, context)
+      ...(safeItems.length ? (enriched ? validateEvidenceRanking : validateRanking)(await this.client.run(enriched ? 'rankEvidence' : 'rank', { request: query, candidates: context, ...(concepts.length ? { concepts: conceptPrompt(concepts) } : {}) }, options), safeItems, context, concepts)
         : { items: [], uncovered: ['These listings could not be safely used for AI matching.'], withheldMatches: 0 }),
       omittedSensitiveListings: items.length - safeItems.length, provenance: provenance(),
     }));

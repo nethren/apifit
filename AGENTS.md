@@ -29,3 +29,11 @@ This is APIFit's independent application repository. Keep source, tests and impl
 Use Node 22 or newer. npm run build checks backend syntax and builds the frontend. npm start serves both at http://127.0.0.1:4173. Never expose the documentation fetcher publicly without a deployment security review.
 
 Hosted mode requires an exact HTTPS origin, explicit access mode and persistent data directory. Password mode requires a secret; public mode keeps every other protection. Preserve Host/origin validation, owner-scoped records, bounded work and minimal health. See documentation/deployment.md. Run npm run repo:check before committing. Keep dated evidence intact but label superseded scope accurately.
+
+Vercel free-tier adaptation was authorized on 2026-09-17. Its separate Node
+function entry uses shared Redis metadata/atomic budget reservations, not a
+local data volume. Private records are sealed and held in browser tab memory;
+never write their text or ciphertext to Redis, URLs, browser storage or logs.
+See documentation/vercel-migration.md. Never initialize a new allowance or
+enable both the local ledger and shared ledger. Upstash must stay on Free with
+eviction and auto-upgrade disabled. No paid hosting is authorized.

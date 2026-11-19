@@ -9,6 +9,7 @@ COPY index.html vite.config.mjs ./
 COPY src ./src
 COPY public ./public
 COPY server ./server
+COPY api ./api
 COPY shared ./shared
 COPY scripts ./scripts
 COPY tests ./tests

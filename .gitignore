@@ -10,7 +10,11 @@ playwright-report/
 *.log
 .cache/
 .local/
+.vercel/
+.generated/
+generated/
 .playwright-cli/
 output/playwright/
 output/search-quality/
 output/retrieval-quality/
+.vercel

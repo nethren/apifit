@@ -11,6 +11,8 @@
 !public/**
 !server/
 !server/**
+!api/
+!api/**
 !shared/
 !shared/**
 !scripts/

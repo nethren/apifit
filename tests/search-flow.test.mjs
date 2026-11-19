@@ -257,3 +257,12 @@ test('active interface has no requirement editor, assessment action or paid shor
   assert.doesNotMatch(save, /api\(|fetch\(|withAi\(/);
   assert.match(app, /summaries\.current\.has\(key\)/);
 });
+
+test('AI defaults on but remains readiness-gated and status refresh preserves an explicit opt-out', async () => {
+  const app = await readFile(new URL('../src/SearchApp.jsx', import.meta.url), 'utf8');
+  assert.match(app, /\[aiEnabled, setAiEnabled\] = useState\(true\)/);
+  assert.match(app, /aiEnabled && aiStatus\?\.ready/);
+  const refresh = app.slice(app.indexOf('async function refreshAi('), app.indexOf('useEffect(() =>'));
+  assert.doesNotMatch(refresh, /setAiEnabled/);
+  assert.match(app, /Anthropic/);
+});

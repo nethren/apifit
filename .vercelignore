@@ -1,0 +1,18 @@
+# Never upload local runtime/auth/ledger files or generated developer outputs.
+.git
+.local
+.vercel
+.generated
+.env
+.env.*
+node_modules
+dist
+output
+coverage
+test-results
+playwright-report
+.playwright-cli
+.cache
+*.log
+.DS_Store
+documentation

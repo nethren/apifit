@@ -4,8 +4,8 @@ import { dirname } from 'node:path';
 const DIRECTORY = 'https://registry.modelcontextprotocol.io/v0.1/servers';
 // Public metadata only. Never store a request, a query-selected excerpt or a key.
 export class McpIndex {
-  constructor({ fetcher, normalize, now = Date.now, file = null, maxPages = 400, maxRecords = 40000, ttlMs = 3600000 } = {}) {
-    Object.assign(this, { fetcher, normalize, now, file, maxPages, maxRecords, ttlMs });
+  constructor({ fetcher, normalize, now = Date.now, file = null, maxPages = 1000, maxRecords = 100000, ttlMs = 3600000, readOnly = false, refreshTimeoutMs = 360000, onProgress = null } = {}) {
+    Object.assign(this, { fetcher, normalize, now, file, maxPages, maxRecords, ttlMs, readOnly, refreshTimeoutMs, onProgress });
     this.entries = new Map(); this.pages = 0; this.complete = false; this.updatedAt = 0; this.lastAttempt = 0; this.stopped = false;
     this.controller = new AbortController();
   }
@@ -13,7 +13,7 @@ export class McpIndex {
     if (!this.file) return;
     try {
       const raw = await readFile(this.file, 'utf8');
-      if (Buffer.byteLength(raw) > 48 * 1024 * 1024) return;
+      if (Buffer.byteLength(raw) > 128 * 1024 * 1024) return;
       const data = JSON.parse(raw);
       if (data.version !== 1 || !Number.isFinite(data.updatedAt) || data.updatedAt > this.now() || !Array.isArray(data.entries) || data.entries.length > this.maxRecords) return;
       if (data.entries.some(e => e.kind !== 'mcp' || typeof e.id !== 'string' || typeof e.product !== 'string' || typeof e.name !== 'string' || typeof e.description !== 'string')) return;
@@ -23,6 +23,7 @@ export class McpIndex {
     } catch { /* Missing/invalid local cache: refresh through the safe boundary. */ }
   }
   start() {
+    if (this.readOnly) return Promise.resolve();
     if (this.stopped) return Promise.resolve();
     if (this.running) return this.running;
     if (this.updatedAt && this.now() - this.updatedAt < this.ttlMs || this.lastAttempt && this.now() - this.lastAttempt < 60000) return Promise.resolve();
@@ -31,7 +32,7 @@ export class McpIndex {
   }
   async refresh() {
     const nextEntries = new Map(); const visited = new Set(); let cursor = ''; let pages = 0; let complete = false;
-    const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(360000)]);
+    const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(this.refreshTimeoutMs)]);
     this.warning = null;
     try {
       while (pages < this.maxPages && nextEntries.size < this.maxRecords) {
@@ -42,6 +43,7 @@ export class McpIndex {
         const data = JSON.parse(response.text);
         for (const entry of this.normalize(data, response.fetchedAt)) if (nextEntries.size < this.maxRecords) nextEntries.set(entry.id, entry);
         pages++;
+        this.onProgress?.({ pages, entries: nextEntries.size });
         const next = data.metadata?.nextCursor;
         if (!next) { complete = true; break; }
         if (typeof next !== 'string' || next.length > 2000 || visited.has(next)) throw new Error('Invalid cursor');
@@ -85,7 +87,7 @@ export class McpIndex {
     return { entries: [...this.entries.values()], indexed: true, pagesLoaded: this.pages, partial: !this.complete || Boolean(this.warning),
       stale: Boolean(this.updatedAt && this.now() - this.updatedAt >= this.ttlMs),
       refreshing: Boolean(this.running), fetchedAt: this.updatedAt ? new Date(this.updatedAt).toISOString() : null,
-      warning: this.warning || (!this.complete ? 'The public registry index is still loading. Search again shortly for broader coverage.' : null), nextCursor: null };
+      warning: this.warning || (this.readOnly && this.now() - this.updatedAt >= this.ttlMs ? 'The registry snapshot needs refreshing; recently added integrations may be missing.' : !this.complete ? 'The public registry index is still loading. Search again shortly for broader coverage.' : null), nextCursor: null };
   }
   close() { this.stopped = true; this.controller.abort(); }
 }

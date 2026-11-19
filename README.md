@@ -13,9 +13,10 @@ their unanswered questions into one handover.
 
 <img src="docs/assets/apifit-logo.png" alt="APIFit: an interlocking A beside the lowercase wordmark" width="480">
 
-**Status:** working local application with deployment configuration prepared.
-No public hosted instance is claimed. Read the [deployment guide](documentation/deployment.md)
-before exposing the backend. Postman integration is outside the product scope.
+**Status:** working application, with the Vercel preview verified. Custom-domain
+setup and production checks are in progress; see the
+[deployment record](documentation/vercel-migration.md). Postman integration is
+outside the product scope.
 
 ## Try a concrete request
 
@@ -114,14 +115,17 @@ DECISIONS.md      Current decisions and links to their history
 ## Deployment and privacy
 
 APIFit needs a Node backend; uploading `dist/` alone does not provide search or
-AI. The prepared hosting path uses one process, a persistent data directory,
-an exact HTTPS origin and isolated visitor sessions. Public access is supported;
-a password-protected option remains available. Hosted AI stays off until an
-operator configures the runtime secret and existing cost ledger. Hosting and DNS are separate
-operator decisions; this repository does not provision them. Public visitors
+AI. The [Vercel free-tier adapter](documentation/vercel-migration.md) uses Node
+functions and shared Redis safety metadata; the original single-process/disk
+recipe remains available. Both require an exact HTTPS origin and isolated
+visitor sessions. Hosted AI stays off until an operator configures the runtime
+secret and transfers the existing cost ledger. Public visitors
 share a finite operator-funded AI allowance; availability is not guaranteed.
 
-Private requests and results stay in memory and expire. With AI enabled, APIFit
+Private requests and results stay in memory. Server records expire after 15
+minutes; already generated briefs remain downloadable from the open tab. On
+Vercel, authenticated encrypted records travel in request bodies and are held
+in tab memory, not database or browser storage. With AI enabled, APIFit
 sends the request and selected source excerpts to Anthropic after consent;
 Anthropic's retention is separate. Keep confidential text and credentials out
 of inputs. See [permissions and data boundaries](documentation/permissions.md)
