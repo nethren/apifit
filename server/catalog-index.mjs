@@ -3,9 +3,12 @@ import { dirname } from 'node:path';
 
 const DIRECTORY = 'https://registry.modelcontextprotocol.io/v0.1/servers';
 // Public metadata only. Never store a request, a query-selected excerpt or a key.
+// Build and runtime share these bounds. The byte bound keeps the snapshot plus
+// dependencies inside Vercel's 250 MB function bundle: do not raise it alone.
+export const INDEX_LIMITS = Object.freeze({ maxPages: 2000, maxRecords: 200000, maxBytes: 200 * 1024 * 1024 });
 export class McpIndex {
-  constructor({ fetcher, normalize, now = Date.now, file = null, maxPages = 1000, maxRecords = 100000, ttlMs = 3600000, readOnly = false, refreshTimeoutMs = 360000, onProgress = null } = {}) {
-    Object.assign(this, { fetcher, normalize, now, file, maxPages, maxRecords, ttlMs, readOnly, refreshTimeoutMs, onProgress });
+  constructor({ fetcher, normalize, now = Date.now, file = null, maxPages = INDEX_LIMITS.maxPages, maxRecords = INDEX_LIMITS.maxRecords, maxBytes = INDEX_LIMITS.maxBytes, ttlMs = 3600000, readOnly = false, refreshTimeoutMs = 360000, onProgress = null } = {}) {
+    Object.assign(this, { fetcher, normalize, now, file, maxPages, maxRecords, maxBytes, ttlMs, readOnly, refreshTimeoutMs, onProgress });
     this.entries = new Map(); this.pages = 0; this.complete = false; this.updatedAt = 0; this.lastAttempt = 0; this.stopped = false;
     this.controller = new AbortController();
   }
@@ -13,7 +16,7 @@ export class McpIndex {
     if (!this.file) return;
     try {
       const raw = await readFile(this.file, 'utf8');
-      if (Buffer.byteLength(raw) > 128 * 1024 * 1024) return;
+      if (Buffer.byteLength(raw) > this.maxBytes) return;
       const data = JSON.parse(raw);
       if (data.version !== 1 || !Number.isFinite(data.updatedAt) || data.updatedAt > this.now() || !Array.isArray(data.entries) || data.entries.length > this.maxRecords) return;
       if (data.entries.some(e => e.kind !== 'mcp' || typeof e.id !== 'string' || typeof e.product !== 'string' || typeof e.name !== 'string' || typeof e.description !== 'string')) return;

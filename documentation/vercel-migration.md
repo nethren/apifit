@@ -80,16 +80,26 @@ Redis budget. Revert traffic only after reviewing the active budget owner.
   most five records. User-authored input retains the original 64 KiB ceiling.
 - Refresh the public MCP catalogue by rebuilding at least daily. Stale snapshots
   are explicitly marked. A failed catalogue build does not replace the last
-  working deployment. Configure the optional daily redeploy hook below before
-  launch; if GitHub disables scheduled jobs for inactivity, re-enable the job.
+  working deployment. The daily redeploy hook below does this;
+  if GitHub disables scheduled jobs for inactivity, re-enable the job.
 - There is no paid hosting subscription in this configuration. Claude usage
   still consumes the existing cumulative allowance.
 
-The optional `.github/workflows/refresh-catalog.yml` requires a Vercel Deploy
+The `.github/workflows/refresh-catalog.yml` workflow uses a Vercel Deploy
 Hook for this project's production branch, stored only in GitHub Actions secret
 `VERCEL_CATALOG_DEPLOY_HOOK`. The hook triggers a normal build, so failed registry
 fetches keep the preceding deployment intact. It is a credential: never put its
-URL in an issue, repository file or log. It has not been configured yet.
+URL in an issue, repository file or log. The owner configured it on 2026-11-22.
+A green workflow only means Vercel accepted the request: confirm the build in
+Vercel. The repository is also linked for deploy on push, so a push to `main`
+deploys to Production without waiting for CI.
+
+The registry snapshot is bounded at 2,000 pages, 200,000 entries and 200 MiB
+(`INDEX_LIMITS` in `server/catalog-index.mjs`). The build reads the file back
+through the runtime loader and fails, keeping the preceding deployment, if it
+would not load. Do not simply raise these again: the function bundle limit is
+250 MB and Hobby memory is 2 GB, so further growth needs a smaller snapshot
+format or different storage.
 
 ## Local verification — 2026-09-17
 
@@ -149,6 +159,8 @@ URL in an issue, repository file or log. It has not been configured yet.
 - Automatic GitHub-to-Vercel integration and the daily catalogue deploy hook
   await explicit owner approval for the ongoing repository/deployment access.
   Manual deployments remain available. No recurring refresh is claimed yet.
+  Superseded on 2026-11-22: the owner approved both; see
+  [that deployment record](deployment-2026-11-22.md).
 
 ## Verification commands
 

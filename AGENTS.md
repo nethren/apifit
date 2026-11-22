@@ -12,6 +12,7 @@ This is APIFit's independent application repository. Keep source, tests and impl
 - No paid services, external LLM calls, deployment, remote creation or push without owner approval.
 - Owner approved Anthropic integration with a US$5 total development cap on 2026-09-14. The pasted chat credential is exposed and must not be used. Use the backend credential adapter: macOS Keychain locally, runtime secret in hosted mode. Never expose credentials through prompts, committed files, browser storage or logs. Paid requests require consent and the durable ledger. Do not reset it, duplicate active ledger owners or raise the cap without a new owner decision.
 - Deployment preparation and public nethren/apifit publication with MIT are authorized on 2026-09-17. The owner chose a public app with paid AI available within the existing allowance. Actually provisioning/deploying or increasing the allowance requires a separate decision. Hosted AI defaults off until runtime credential and existing ledger setup.
+- On 2026-11-22 the owner linked nethren/apifit to Vercel with deploy on push and enabled the daily catalogue refresh. A push to main is now a production deployment and does not wait for CI: get owner approval for it as a deployment and run npm run check first. The daily refresh also publishes whatever is on main. Other branches get previews with AI off.
 
 ## Engineering
 
