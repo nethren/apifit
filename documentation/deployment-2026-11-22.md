@@ -30,3 +30,17 @@ push, the daily refresh hook, and raising the catalogue limits with a push.
 
 These ran on a development Mac with a 1 GiB heap, not on Vercel. Search CPU
 grows linearly with the catalogue, so watch Hobby Active CPU usage.
+
+## Schedule check — 2026-11-23
+
+- The first schedule-started run (45018604643) began 2026-11-22 11:42 UTC,
+  about 8 hours after its 03:23 UTC slot. Its Vercel build
+  `apifit-iyzqdsw96` from `645b96e` reported 68,931 entries across 701 pages
+  and became the live deployment. Live search reported it complete and fresh.
+  This supersedes "had not yet been observed" above.
+- By 2026-11-23 08:17 UTC no scheduled run had appeared for that day. The
+  workflow was active, so this points to GitHub delaying or dropping
+  scheduled runs rather than a broken setup.
+- The owner approved moving the cron to `47 5 * * *` (05:47 UTC, 13:47
+  Singapore), away from busier times. The previous deployment stays live if
+  a refresh build fails, so late runs leave the catalogue older, not broken.

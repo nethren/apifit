@@ -2,7 +2,9 @@ name: Refresh deployed public catalogue
 on:
   workflow_dispatch:
   schedule:
-    - cron: '23 3 * * *'
+    # 05:47 UTC (13:47 Singapore). Moved from 03:23 UTC on 2026-11-23 after
+    # GitHub ran it 8 hours late once and had not run it the next day.
+    - cron: '47 5 * * *'
 permissions:
   contents: read
 jobs:
