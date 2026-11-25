@@ -7,5 +7,5 @@ export const AI_CONFIG = Object.freeze({
   // Reserve the full documented model context, not the estimated request count.
   maxBillableInputTokens: 200000,
   maxPayloadBytes: 48000, timeoutMs: 45000,
-  promptVersion: 'apifit-lookup-and-capabilities-v4.8-feature-quotes', liveQualityValidated: false,
+  promptVersion: 'apifit-lookup-and-capabilities-v4.9-evidence-ids', liveQualityValidated: false,
 });

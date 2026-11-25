@@ -15,7 +15,7 @@ import { relatedTerms } from '../server/text.mjs';
 const options = { ai: true, aiConsent: AI_CONSENT };
 const items = normalizeApis(apiDirectory, '2026-09-14');
 const candidateContext = directoryContext(items);
-const match = (index, override = {}) => ({ id: `c${index + 1}`, tier: 'close', reason: 'A related capability.', gap: '', quote: candidateContext[index].excerpt.split('\n')[2], ...override });
+const match = (index, override = {}) => ({ id: `c${index + 1}`, evidenceId: candidateContext[index].evidence[0].id, tier: 'close', reason: 'A related capability.', gap: '', ...override });
 const analysis = () => parseSource(source());
 function service(run) {
   return new AiService({ client: { run }, budget: { status: async () => ({ available: true, remainingUsd: 4 }) }, credentialStatus: async () => 'stored' });
@@ -33,7 +33,7 @@ async function serve(t, overrides = {}) {
     if (task === 'searchQueries') return { queries: ['parking'] };
     if (task === 'searchPlan') return { queries: ['parking'], constraints: [] };
     if (task === 'rankEvidence') return { matches: context.candidates.map(c => ({ id: c.id, tier: 'partial', reason: 'Find available parking.', gap: '', evidenceId: c.evidence[0].id })), uncovered: [] };
-    if (task === 'rank') return { matches: context.candidates.map(c => ({ id: c.id, tier: 'close', reason: 'Find available parking.', gap: '', quote: 'Parking availability in cities' })), uncovered: [] };
+    if (task === 'rank') return { matches: context.candidates.map(c => ({ id: c.id, evidenceId: c.evidence[0]?.id || 'none', tier: 'close', reason: 'Find available parking.', gap: '' })), uncovered: [] };
     if (task === 'summary') return explanationResponse(context);
     if (task === 'handoff') return briefResponse(context.candidates);
     throw new Error(`Unexpected task: ${task}`);
@@ -81,8 +81,8 @@ test('ranking preserves relevance order even when an earlier lead has a stronger
   assert.match(result.items[0].signals.reliability, /Not measured/);
   assert.equal(result.items[0].reliabilityScore, undefined);
 });
-test('ranking rejects hallucinated IDs, duplicate entries, fabricated quotes and extra verdicts', () => {
-  for (const bad of [match(0, { id: 'unknown' }), match(0, { quote: '99.99% uptime' }), match(0, { tier: 'perfect' }), match(0, { rating: 100 }), match(0, { reason: 'x'.repeat(181) })]) {
+test('ranking rejects hallucinated IDs, duplicate entries, invented evidence, model-written quotes and extra verdicts', () => {
+  for (const bad of [match(0, { id: 'unknown' }), match(0, { evidenceId: 'c1.s99' }), match(0, { quote: '99.99% uptime' }), match(0, { tier: 'perfect' }), match(0, { rating: 100 }), match(0, { reason: 'x'.repeat(181) })]) {
     assert.throws(() => validateRanking({ matches: [bad], uncovered: [] }, items, candidateContext), { code: 'AI_INVALID_RESULT' });
   }
   assert.throws(() => validateRanking({ matches: [match(0), match(0)], uncovered: [] }, items, candidateContext), { code: 'AI_INVALID_RESULT' });
@@ -94,23 +94,21 @@ test('named API and MCP lookups can return plain identity leads without inventin
     { id: 'mcp:sample', product: 'io.github.widget/widget-mcp', kind: 'mcp', name: 'Widget MCP', description: '' },
   ];
   const context = directoryContext(candidates);
-  const response = { matches: context.map((c, i) => ({ id: c.id, tier: 'partial', reason: `Listed as ${candidates[i].name}.`, gap: 'Check whether it supports your planned feature.', quote: c.excerpt.split('\n')[0] })), uncovered: [] };
+  const response = { matches: context.map((c, i) => ({ id: c.id, tier: 'partial', evidenceId: 'none', reason: `Listed as ${candidates[i].name}.`, gap: 'Check whether it supports your planned feature.' })), uncovered: [] };
   const result = validateRanking(response, candidates, context);
   assert.equal(result.items.length, 2);
   assert.ok(result.items.every(i => i.match.tier === 'partial' && i.match.basis.includes('identity only')));
-  const fabricated = structuredClone(response); fabricated.matches[0].quote = 'Official verified tool';
+  const fabricated = structuredClone(response); fabricated.matches[0].evidenceId = 'c1.s1'; // no such sentence
   assert.equal(validateRanking(fabricated, candidates, context).items.length, 1);
 });
 test('identity-only citations cannot carry capability or ownership assertions', () => {
   const candidate = { id: 'api:sample', product: 'sample.example:widget', kind: 'api', name: 'Widget API', description: 'Public listing.' };
   const context = directoryContext([candidate]);
-  for (const quote of [context[0].excerpt.split('\n')[0], context[0].excerpt.split('\n').slice(0, 2).join('\n')]) {
-    const result = validateRanking({ matches: [{ id: 'c1', tier: 'close', reason: 'Automatically retrieves every customer record.', gap: '', quote }], uncovered: [] }, [candidate], context);
-    assert.equal(result.items[0].match.tier, 'partial');
-    assert.doesNotMatch(result.items[0].match.reason, /customer|Automatically/);
-    assert.match(result.items[0].match.basis, /capabilities have not been checked/);
-    assert.equal(result.items[0].match.quote, quote);
-  }
+  const result = validateRanking({ matches: [{ id: 'c1', evidenceId: 'none', tier: 'close', reason: 'Automatically retrieves every customer record.', gap: '' }], uncovered: [] }, [candidate], context);
+  assert.equal(result.items[0].match.tier, 'partial');
+  assert.doesNotMatch(result.items[0].match.reason, /customer|Automatically/);
+  assert.match(result.items[0].match.basis, /capabilities have not been checked/);
+  assert.equal(result.items[0].match.quote, 'Name: Widget API');
 });
 test('unverified ownership or reliability assurances are replaced by a neutral listing lead', () => {
   for (const reason of ['The official connector.', 'A verified safe integration.', 'Reliable API with guaranteed uptime.']) {
@@ -133,15 +131,15 @@ test('brief input is bounded per source and citations cannot cross sources', () 
   const invented = briefResponse(context); invented.integrations.c1.capabilities[0].evidenceIds = ['unknown'];
   assert.throws(() => validateHandoff(invented, analyses, context), { code: 'AI_INVALID_RESULT' });
 });
-test('one invalid quoted candidate is withheld without erasing independently valid matches', () => {
-  const result = validateRanking({ matches: [match(0, { quote: 'fabricated claim' }), match(1)], uncovered: [] }, items, candidateContext);
+test('one candidate citing another\'s evidence is withheld without erasing independently valid matches', () => {
+  const result = validateRanking({ matches: [match(0, { evidenceId: candidateContext[1].evidence[0].id, reason: 'fabricated claim' }), match(1)], uncovered: [] }, items, candidateContext);
   assert.equal(result.withheldMatches, 1); assert.deepEqual(result.items.map(x => x.id), [items[1].id]);
   assert.equal(JSON.stringify(result).includes('fabricated claim'), false);
   assert.throws(() => validateRanking({ matches: [match(0, { id: 'invented' }), match(1)], uncovered: [] }, items, candidateContext), { code: 'AI_INVALID_RESULT' });
 });
 test('credential-like public metadata is omitted without sending it or blocking clean matches', async () => {
   const calls = []; const sensitive = { ...items[0], description: 'Bearer ' + 'synthetic'.repeat(8) };
-  const ai = service(async (task, data) => { calls.push(data); return { matches: [{ id: 'c1', tier: 'close', reason: 'Weather information.', gap: '', quote: data.candidates[0].excerpt.split('\n')[0] }], uncovered: [] }; });
+  const ai = service(async (task, data) => { calls.push(data); return { matches: [{ id: 'c1', evidenceId: data.candidates[0].evidence[0]?.id || 'none', tier: 'close', reason: 'Weather information.', gap: '' }], uncovered: [] }; });
   const result = await ai.rank('weather', [sensitive, items[1]], options);
   assert.equal(result.omittedSensitiveListings, 1); assert.equal(result.items[0].id, items[1].id);
   assert.equal(JSON.stringify(calls).includes('Bearer'), false);

@@ -5,7 +5,7 @@ import { parseSource } from '../server/parser.mjs';
 import { source, apiDirectory } from './fixtures.mjs';
 import { AiService, AI_CONSENT } from '../server/ai-service.mjs';
 import { directoryContext, rankingContext, validateRanking, validateEvidenceRanking, validateConcepts, conceptCoverage } from '../server/search-ai.mjs';
-import { taskSchema, TASKS } from '../server/ai-prompts.mjs';
+import { taskSchema, TASKS, RANK_EVIDENCE_PATTERN } from '../server/ai-prompts.mjs';
 import { normalizeApis } from '../server/catalog.mjs';
 import { CONCEPT_ICONS } from '../shared/concept-icons.mjs';
 
@@ -19,8 +19,8 @@ const concepts = validateConcepts([
   { label: 'Weather', icon: 'weather', words: ['weather'] },
   { label: 'SMS', icon: 'sms', words: ['Text'] },
 ], query);
-const quote = index => context[index].excerpt.split('\n')[2];
-const match = (index, covers, extra = {}) => ({ id: `c${index + 1}`, tier: 'close', reason: 'A related capability.', gap: '', quote: quote(index), covers, ...extra });
+const cite = index => context[index].evidence[0].id;
+const match = (index, covers, extra = {}) => ({ id: `c${index + 1}`, evidenceId: cite(index), tier: 'close', reason: 'A related capability.', gap: '', covers, ...extra });
 function service(run) {
   return new AiService({ client: { run }, budget: { status: async () => ({ available: true, remainingUsd: 4 }) }, credentialStatus: async () => 'stored' });
 }
@@ -51,14 +51,14 @@ test('coverage accepts only issued concept IDs, in concept order, without repeat
 test('ranking keeps coverage for accepted reasons and drops it for neutral or withheld leads', () => {
   const result = validateRanking({ matches: [match(0, ['k1', 'k7']), match(1, ['k2'])], uncovered: [] }, items, context, concepts);
   assert.deepEqual(result.items.map(i => i.match.covers), [['k1'], ['k2']]);
-  // Identity-only quote: listed under its name, so it covers nothing.
-  const identity = validateRanking({ matches: [match(0, ['k1', 'k2', 'k3'], { quote: 'Name: Parking API' })], uncovered: [] }, items, context, concepts);
+  // A named lookup cites no sentence: listed under its name, so it covers nothing.
+  const identity = validateRanking({ matches: [match(0, ['k1', 'k2', 'k3'], { evidenceId: 'none' })], uncovered: [] }, items, context, concepts);
   assert.deepEqual(identity.items[0].match.covers, []);
   // An unverified assurance downgrades the lead and withholds its coverage.
   const assured = validateRanking({ matches: [match(0, ['k1'], { reason: 'Official, verified parking data.' })], uncovered: [] }, items, context, concepts);
   assert.deepEqual(assured.items[0].match.covers, []);
-  // A quote that is not in the listing withholds the whole match, coverage included.
-  const invented = validateRanking({ matches: [match(0, ['k1'], { quote: 'Sends SMS worldwide' }), match(1, ['k2'])], uncovered: [] }, items, context, concepts);
+  // Citing another candidate's sentence withholds the whole match, coverage included.
+  const invented = validateRanking({ matches: [match(0, ['k1'], { evidenceId: cite(1) }), match(1, ['k2'])], uncovered: [] }, items, context, concepts);
   assert.deepEqual(invented.items.map(i => [i.id, i.match.covers]), [[items[1].id, ['k2']]]);
 });
 
@@ -80,12 +80,12 @@ test('evidence ranking grants coverage only to documentation-backed matches', ()
 });
 
 test('ranking schema offers a covers enum of issued IDs only when concepts are supplied', () => {
-  const withConcepts = taskSchema('rank', { concepts: concepts.map(({ id, label }) => ({ id, label })) });
+  const withConcepts = taskSchema('rank', { candidates: context, concepts: concepts.map(({ id, label }) => ({ id, label })) });
   assert.deepEqual(withConcepts.properties.matches.items.properties.covers.items.enum, ['k1', 'k2', 'k3']);
   assert.ok(withConcepts.properties.matches.items.required.includes('covers'));
   assert.equal(taskSchema('rank', { candidates: [] }).properties.matches.items.properties.covers, undefined);
   assert.equal(taskSchema('rankEvidence', { concepts: [{ id: 'k1', label: 'Parking' }] }).properties.matches.items.properties.covers.items.enum[0], 'k1');
-  assert.throws(() => taskSchema('rank', { concepts: [{ id: 'injected', label: 'Parking' }] }), /Invalid concept envelope/);
+  assert.throws(() => taskSchema('rank', { candidates: context, concepts: [{ id: 'injected', label: 'Parking' }] }), /Invalid concept envelope/);
   const plan = taskSchema('searchQueries', {});
   assert.deepEqual(plan.properties.concepts.items.properties.icon.enum, CONCEPT_ICONS);
   assert.ok(taskSchema('searchPlan', { request: query }).required.includes('concepts'));
@@ -127,7 +127,7 @@ async function serve(t, run) {
 test('HTTP discovery returns request concepts and per-result coverage from one interpretation', async t => {
   const { request, calls } = await serve(t, (task, data) => {
     if (task === 'searchQueries') return { queries: ['parking'], concepts: [{ label: 'Parking', icon: 'car', words: ['parking'] }, { label: 'SMS', icon: 'sms', words: ['Text'] }] };
-    if (task === 'rank') return { matches: data.candidates.map(c => ({ id: c.id, tier: 'close', reason: 'Shows parking availability.', gap: '', quote: 'Parking availability in cities', covers: ['k1', 'k5'] })), uncovered: [] };
+    if (task === 'rank') return { matches: data.candidates.map(c => ({ id: c.id, tier: 'close', evidenceId: c.evidence[0]?.id || 'none', reason: 'Shows parking availability.', gap: '', covers: ['k1', 'k5'] })), uncovered: [] };
     throw new Error(`Unexpected task ${task}`);
   });
   const found = await (await request('/api/discover', { query, source: 'api', ...options })).json();
@@ -162,18 +162,29 @@ test('more results reuse the stored concepts without another interpretation requ
   assert.deepEqual(requests.map(r => r.map(k => k.id)), [['k1'], ['k1']]);
 });
 
-test('feature matches are told to quote the description, and only description quotes keep coverage', () => {
-  // Production on 2026-11-19: the ranker quoted Name: lines for feature matches,
-  // so every result was downgraded to an identity lead with no coverage.
-  assert.match(TASKS.rank.instruction, /For a feature match, quote the Description: text that establishes the action, never the Name: or Product: line/);
-  const [first] = context;
-  const description = first.excerpt.split('\n').find(line => line.startsWith('Description: ')).slice('Description: '.length, 'Description: '.length + 60);
-  const name = first.excerpt.split('\n')[0];
-  const rank = quote => validateRanking({ uncovered: [], matches: [{ id: first.id, tier: 'close', reason: 'Does the described action.', gap: '', quote, covers: ['k2'] }] }, items, context, concepts).items[0].match;
-  const byDescription = rank(description);
-  assert.equal(byDescription.reason, 'Does the described action.');
-  assert.deepEqual(byDescription.covers, ['k2']);
-  const byName = rank(name);
-  assert.match(byName.reason, /^Listed under this name/);
-  assert.deepEqual(byName.covers, []);
+test('ranking can cite only description sentences, so a name cannot carry a capability or coverage', () => {
+  // Production on 2026-11-19 and 2026-11-25: asked to quote text, the ranker
+  // quoted Name: lines, so every result lost its reason and coverage. It now
+  // picks a sentence ID from a schema enum and the server supplies the text.
+  const listing = { id: 'api:x', product: 'storm.example', kind: 'api', name: 'Storm Weather API', description: 'Hourly forecasts for any location. Severe weather alerts by region!  ok' };
+  const ctx = directoryContext([listing]);
+  assert.deepEqual(ctx[0].evidence, [{ id: 'c1.s1', excerpt: 'Hourly forecasts for any location.' }, { id: 'c1.s2', excerpt: 'Severe weather alerts by region!' }]);
+  assert.equal(JSON.stringify(ctx[0].evidence).includes('Storm Weather API'), false);
+  const schema = taskSchema('rank', { candidates: ctx, concepts }).properties.matches.items;
+  const allowed = new RegExp(schema.properties.evidenceId.pattern);
+  assert.equal(schema.properties.evidenceId.pattern, RANK_EVIDENCE_PATTERN);
+  for (const id of ['c1.s1', 'c24.s8', 'none']) assert.ok(allowed.test(id), id);
+  for (const id of ['Name: Storm Weather API', 'Hourly forecasts for any location.', 'c1.s9', 'c1', '', 'None ']) assert.equal(allowed.test(id), false, id);
+  assert.deepEqual(schema.required.slice(0, 2), ['id', 'evidenceId']);
+  assert.throws(() => taskSchema('rank', { candidates: [{ id: 'c1', evidence: [{ id: 'Name: x' }] }] }), /Invalid ranking candidate envelope/);
+  assert.match(TASKS.rank.instruction, /choose FIRST the evidenceId of the sentence that establishes the action/);
+  const rank = (evidenceId, reason = 'Sends severe weather alerts.') => validateRanking({ uncovered: [], matches: [{ id: 'c1', evidenceId, tier: 'close', reason, gap: '', covers: ['k2'] }] }, [listing], ctx, concepts);
+  const cited = rank('c1.s2').items[0].match;
+  assert.deepEqual([cited.reason, cited.quote, cited.evidenceId, cited.covers], ['Sends severe weather alerts.', 'Severe weather alerts by region!', 'c1.s2', ['k2']]);
+  const named = rank('none').items[0].match;
+  assert.deepEqual([named.tier, named.quote, named.covers], ['partial', 'Name: Storm Weather API', []]);
+  assert.match(named.reason, /^Listed under this name/);
+  assert.throws(() => rank('c1.s9'), { code: 'AI_INVALID_RESULT' }); // only withheld match
+  assert.throws(() => validateRanking({ uncovered: [], matches: [{ id: 'c1', evidenceId: 'c1.s1', tier: 'close', reason: 'x', gap: '', quote: 'Name: Storm Weather API', covers: [] }] }, [listing], ctx, concepts), { code: 'AI_INVALID_RESULT' });
+  assert.deepEqual(directoryContext([{ ...listing, description: '' }])[0].evidence, []);
 });

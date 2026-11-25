@@ -44,9 +44,17 @@ export function conceptCoverage(covers, concepts = []) {
   return concepts.map(c => c.id).filter(id => claimed.has(id));
 }
 export const conceptPrompt = concepts => concepts.map(({ id, label, words }) => ({ id, label, requestWords: words }));
-export function directoryContext(items) {
-  return items.map((item, index) => ({ id: `c${index + 1}`, evidenceId: `c${index + 1}`, excerpt: `Name: ${plain(item.name, 200)}\nProduct: ${plain(item.product, 200)}\nDescription: ${plain(item.description, 950)}` }));
+// A listing's description, split into citable sentences. The model cites one by
+// ID and the server supplies the text, so a feature claim can only point at
+// description text: never at the name, and never at a mis-copied quote.
+export function descriptionSentences(description) {
+  return plain(description, 950).split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length >= 3).slice(0, 8).map(s => plain(s, 400));
 }
+export function directoryContext(items) {
+  return items.map((item, index) => ({ id: `c${index + 1}`, name: plain(item.name, 200), product: plain(item.product, 200),
+    evidence: descriptionSentences(item.description).map((excerpt, j) => ({ id: `c${index + 1}.s${j + 1}`, excerpt })) }));
+}
+export const rankingEvidenceIds = context => [...context.flatMap(c => c.evidence.map(e => e.id)), 'none'];
 export function documentationSignal(item) {
   if (item.rankingEvidence?.status === 'documentation-read') return { label: 'Documentation read', strength: 3, reliability: 'Not measured: documentation is not an uptime, safety or response-quality check.' };
   return { label: item.specificationUrl ? 'Specification linked' : item.repositoryUrl ? 'Repository linked' : item.remoteEndpoints?.length ? 'MCP connection listed' : item.documentationUrl ? 'Website linked' : 'No source linked',
@@ -94,25 +102,24 @@ export function validateRanking(value, items, context, concepts = []) {
   const seen = new Set();
   let withheldMatches = 0;
   const ranked = value.matches.flatMap((match, order) => {
-    exact(match, ['id', 'tier', 'reason', 'gap', 'quote', ...(concepts.length ? ['covers'] : [])]);
+    exact(match, ['id', 'evidenceId', 'tier', 'reason', 'gap', ...(concepts.length ? ['covers'] : [])]);
     const index = context.findIndex(c => c.id === match.id);
-    if (index < 0 || seen.has(match.id) || !['close', 'partial'].includes(match.tier)) invalid();
+    if (index < 0 || seen.has(match.id) || !['close', 'partial'].includes(match.tier) || typeof match.evidenceId !== 'string') invalid();
     seen.add(match.id);
-    // Independently invalid statements cannot erase other verified quotes.
-    // Identity/schema errors still reject the entire envelope.
+    // A sentence from another candidate, or an unsafe statement, withholds only
+    // this match. Identity/schema errors still reject the entire envelope.
+    const evidence = context[index].evidence.find(e => e.id === match.evidenceId);
     try {
-      text(match.reason, 180); text(match.gap, 180, true); text(match.quote, 350);
-      if (!context[index].excerpt.includes(match.quote)) invalid();
+      text(match.reason, 180); text(match.gap, 180, true);
+      if (!evidence && match.evidenceId !== 'none') invalid();
     } catch (error) {
       if (error.code !== 'AI_INVALID_RESULT') throw error;
       withheldMatches++; return [];
     }
     const item = items[index];
-    const identityLines = context[index].excerpt.split('\n').slice(0, 2);
-    const identityOnly = match.quote.split('\n').every(line => identityLines.includes(line));
-    if (identityOnly) {
+    if (!evidence) {
       return [{ ...item, match: { tier: 'partial', reason: 'Listed under this name. Open an explanation to check how it could help.', gap: '',
-        quote: match.quote, basis: 'Directory identity only; capabilities have not been checked.', covers: [] }, signals: documentationSignal(item), order }];
+        quote: `Name: ${plain(item.name, 200)}`, basis: 'Directory identity only; capabilities have not been checked.', covers: [] }, signals: documentationSignal(item), order }];
     }
     // Discovery has not checked ownership, trust or operational quality. If a
     // model nevertheless adds such an assurance, retain only a neutral listing
@@ -122,7 +129,7 @@ export function validateRanking(value, items, context, concepts = []) {
       return [{ ...item, match: { tier: 'partial', reason: 'Found in public listings. Open an explanation to check what it can do.', gap: '',
         quote: `Name: ${plain(item.name, 200)}`, basis: 'Directory listing only; an unverified assurance was withheld.', covers: [] }, signals: documentationSignal(item), order }];
     }
-    return [{ ...item, match: { tier: match.tier, reason: match.reason, gap: match.gap, quote: match.quote, basis: 'AI interpretation of directory metadata, not verified feasibility.', covers: conceptCoverage(match.covers, concepts) }, signals: documentationSignal(item), order }];
+    return [{ ...item, match: { tier: match.tier, reason: match.reason, gap: match.gap, quote: evidence.excerpt, evidenceId: evidence.id, basis: 'AI interpretation of directory metadata, not verified feasibility.', covers: conceptCoverage(match.covers, concepts) }, signals: documentationSignal(item), order }];
   });
   if (withheldMatches && !ranked.length) invalid();
   // The model has already ordered by relevance. Evidence caveats must not push
